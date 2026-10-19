@@ -215,6 +215,7 @@ async function start() {
   loadProfile().catch(() => {});
   $('#boot').hidden = true;
   $('#login').hidden = true;
+  paint($('#login'), ''); // форма входа с введённым паролем больше не нужна
   $('#app').hidden = false;
   $('#tabbar').hidden = false;
   const r = routeFromHash();

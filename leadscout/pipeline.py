@@ -97,7 +97,7 @@ class Pipeline:
             ext = hint
         if not ext.is_order:
             # правила сочли это заказом, а нейросеть нет (или заказ без явных слов): в режиме «ничего не пропускать» показываем с пометкой
-            if force or (self._recall() and (hint.is_order or (self.llm.name != "claude" and lenient))):
+            if force or (self._recall() and (hint.is_order or (self.llm.name == "rules" and lenient))):
                 ext.is_order = True
                 ext.flags = [*ext.flags, ex.Flag("doubt", "Не уверен, что это заказ: похоже по формулировке", "low")]
             else:
@@ -124,7 +124,7 @@ class Pipeline:
         short = 20 if self._recall() else 40
         if len(ex.squash(text)) < short:
             return False
-        if self.llm.name == "claude":
+        if self.llm.name != "rules":
             pos, seeker, ads = ex.order_signals(text)
             return pos >= 1 and not (ads >= 2 and pos < 3) and not (seeker >= 2 and pos < 3)
         return ex.looks_like_order(text)
@@ -192,6 +192,8 @@ class Pipeline:
         if probe.verdict in {"scam", "skip"}:
             return probe
         learned = learning.learned(self.db)
+        if getattr(self.llm, "deferred", False):
+            return await self._rules.score(view, profile, learned)  # ИИ с лимитами уточнит позже, в фоне
         try:
             return await self.llm.score(view, profile, learned)
         except Exception:  # ИИ упал неожиданно: не теряем заказ
@@ -217,8 +219,8 @@ class Pipeline:
         return order_id
 
     async def _pre_draft(self, order_id: int, view: OrderView, profile: Profile, score: Score) -> None:
-        if score.verdict != "match":
-            return
+        if score.verdict != "match" or getattr(self.llm, "deferred", False):
+            return  # у бесплатного ИИ запросы на счету: черновик напишем, когда вы откроете заказ
         try:
             await self.make_draft(order_id, profile.tone, 0, view=view, profile=profile)
         except Exception:
@@ -273,21 +275,45 @@ class Pipeline:
         n = 0
         for row in rows:
             view = self.view_of(row)
-            if use_llm or row["scored_by"] != "claude":
+            if use_llm or row["scored_by"] in (None, "rules"):
                 engine: LLM = self.llm if use_llm else self._rules
                 score = await engine.score(view, profile, learned)
             else:
                 # оценка от ИИ остаётся; меняем её, только если заказ теперь нарушает жёсткие правила
                 old = Score(score=row["score"], verdict=row["verdict"] if row["verdict"] in {"match", "maybe"} else "maybe",
-                            why=row["why"] or "", fit=list(row["fit"] or []), flags=[], scored_by="claude")
+                            why=row["why"] or "", fit=list(row["fit"] or []), flags=[], scored_by=row["scored_by"])
                 score = finalize(old, view, profile, view.flags)
                 if score.verdict not in {"skip", "scam"} or row["verdict"] in {"skip", "scam"}:
                     continue
-            lo, hi, note = recommend_price(view, profile, store.won_amounts(self.db, profile_keys(profile.skills)))
-            self.db.run(
-                "UPDATE orders SET score=?, verdict=?, why=?, fit=?, red_flags=?, rec_min=?, rec_max=?, rec_note=?, scored_by=? WHERE id=?",
-                (score.score, score.verdict, score.why, dumps(score.fit), dumps([f.as_dict() for f in score.flags]),
-                 lo, hi, note, score.scored_by, row["id"]),
-            )
+            self._apply_score(row["id"], view, profile, score)
             n += 1
         return n
+
+    def _apply_score(self, order_id: int, view: OrderView, profile: Profile, score: Score) -> None:
+        lo, hi, note = recommend_price(view, profile, store.won_amounts(self.db, profile_keys(profile.skills)))
+        self.db.run(
+            "UPDATE orders SET score=?, verdict=?, why=?, fit=?, red_flags=?, rec_min=?, rec_max=?, rec_note=?, scored_by=? WHERE id=?",
+            (score.score, score.verdict, score.why, dumps(score.fit), dumps([f.as_dict() for f in score.flags]),
+             lo, hi, note, score.scored_by, order_id),
+        )
+
+    async def upgrade_with_ai(self, limit: int = 5, hours: int = 72) -> int:
+        """Для сервисов с лимитами: заказы сначала оцениваются правилами, а ИИ уточняет их в фоне, самые свежие первыми."""
+        if self.llm.name == "rules":
+            return 0
+        profile = load_profile(self.db)
+        rows = self.db.all(
+            store.ORDER_SELECT + " WHERE o.scored_by='rules' AND o.verdict IN ('match','maybe') AND o.feedback IS NULL "
+            "AND o.stage IS NULL AND o.state!='hidden' AND o.created_at>=? ORDER BY o.id DESC LIMIT ?",
+            (iso(now_utc() - timedelta(hours=hours)), limit),
+        )
+        learned = learning.learned(self.db) if rows else None
+        done = 0
+        for row in rows:
+            view = self.view_of(row)
+            score = await self.llm.score(view, profile, learned)
+            if score.scored_by == "rules":
+                break  # ИИ сейчас недоступен или лимит кончился: попробуем позже
+            self._apply_score(row["id"], view, profile, score)
+            done += 1
+        return done

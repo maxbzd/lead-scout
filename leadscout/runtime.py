@@ -14,6 +14,7 @@ from .db import Database
 from .events import EventBus
 from .llm.base import LLM, LLMUnavailable
 from .llm.claude import ClaudeLLM, FallbackLLM
+from .llm.openai_compat import PROVIDERS, OpenAICompatLLM
 from .llm.rules import RuleLLM
 from .models import RawMessage
 from .notify import Notifier
@@ -85,17 +86,60 @@ class Runtime:
     # --------------------------------------------------------------- ИИ ----
     def build_llm(self) -> None:
         key = self.secrets.get("anthropic_key")
+        cfg = self.db.get_setting("ai_config")
         if key:
             self.llm = FallbackLLM(ClaudeLLM(key, self.settings.model_fast, self.settings.model_smart, db=self.db))
+        elif cfg and cfg.get("base_url") and cfg.get("model"):
+            self.llm = FallbackLLM(OpenAICompatLLM(
+                cfg["base_url"], self.secrets.get("ai_key") or "", cfg["model"], db=self.db,
+                rpm=int(cfg.get("rpm", 20)), rpd=int(cfg.get("rpd", 1000)), provider=cfg.get("provider", "custom")))
         else:
             self.llm = RuleLLM()
         self.pipeline.set_llm(self.llm)
 
     def llm_status(self) -> dict:
-        mode = "claude" if self.llm.name == "claude" else "rules"
+        primary = getattr(self.llm, "primary", None)
+        mode = "rules" if self.llm.name == "rules" else ("claude" if self.llm.name == "claude" else "ai")
         err = getattr(self.llm, "last_error", None)
         usage = self.db.get_setting("usage:" + now_utc().strftime("%Y-%m"))
-        return {"mode": mode, "error": err, "source": self.secrets.source("anthropic_key"), "usage": usage}
+        out = {"mode": mode, "error": err, "usage": usage, "source": "none", "provider": None}
+        if mode == "claude":
+            out["source"] = self.secrets.source("anthropic_key")
+        elif mode == "ai":
+            cfg = self.db.get_setting("ai_config") or {}
+            out.update(source="app" if not self.secrets.source("ai_key") == "env" else "env", provider=cfg.get("provider"),
+                       model=cfg.get("model"), used_today=primary.used_today(), limit_today=primary.rpd)
+        return out
+
+    async def connect_ai(self, provider: str, key: str, model: str = "", base_url: str = "") -> None:
+        """Бесплатный или свой ИИ: проверяем одним коротким запросом и только потом сохраняем."""
+        preset = PROVIDERS.get(provider)
+        if preset is None:
+            raise LLMUnavailable("Неизвестный сервис ИИ")
+        base_url = (base_url or preset["base_url"]).strip()
+        model = (model or preset["model"]).strip()
+        key = key.strip()
+        if not base_url.startswith(("http://", "https://")) or not model:
+            raise LLMUnavailable("Укажите адрес сервиса (http:// или https://) и название модели")
+        if preset["needs_key"] and len(key) < 8:
+            raise LLMUnavailable("Вставьте ключ целиком. Его выдаёт сам сервис")
+        probe = OpenAICompatLLM(base_url, key, model, rpm=preset["rpm"], rpd=preset["rpd"], provider=provider)
+        try:
+            await probe.check()
+        finally:
+            await probe.aclose()
+        self.db.set_setting("ai_config", {"provider": provider, "base_url": base_url, "model": model,
+                                          "rpm": preset["rpm"], "rpd": preset["rpd"]})
+        if key:
+            self.secrets.set("ai_key", key)
+        else:
+            self.secrets.delete("ai_key")
+        self.build_llm()
+
+    def disconnect_ai(self) -> None:
+        self.db.del_setting("ai_config")
+        self.secrets.delete("ai_key")
+        self.build_llm()
 
     async def connect_claude(self, key: str) -> None:
         key = key.strip()
@@ -391,6 +435,7 @@ class Runtime:
                 if self.notifier.weekly_due(now):
                     await self.notifier.send_weekly(now)
                 await self.notifier.flush_queue(now)
+                await self.pipeline.upgrade_with_ai()
                 await self._maintenance()
             except asyncio.CancelledError:
                 raise
