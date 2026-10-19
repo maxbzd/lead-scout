@@ -2,13 +2,13 @@
 
 import { get, post } from '../api.js';
 import { S, loadFeed, loadStatus, replaceCard } from '../state.js';
-import { $, copyText, esc, html, I, openLink, paint, plural, raw, ring, toast, money } from '../ui.js';
+import { $, copyText, esc, html, I, openLink, paint, plural, raw, ring, safeUrl, toast, money } from '../ui.js';
 import { askWhy, giveFeedback, openOrder } from './detail.js';
 import { openConnect } from './connect.js';
 import { openChats } from './chats.js';
 
 const FILTERS = [
-  ['all', 'Все'], ['hot', 'Горячие'], ['saved', 'Отложенные'], ['rated', 'Оценённые'], ['offered', 'Предложил цену'], ['rejected', 'Отсеянные'],
+  ['all', 'Все'], ['hot', 'Горячие'], ['saved', 'Отложенные'], ['rated', 'Оценённые'], ['offered', 'Предложил цену'], ['rejected', 'Отсеянные'], ['discarded', 'Отброшено'],
 ];
 const SORTS = [['score', 'Совпадение'], ['new', 'Свежие'], ['budget', 'Бюджет']];
 
@@ -119,6 +119,7 @@ function emptyState() {
       rated: 'Ставьте 👍 и 👎 под заказами: так бот учится.',
       offered: 'Здесь будут заказы, на которые вы уже откликнулись.',
       rejected: 'Здесь будет то, что бот отсеял: мошенничество, мало денег, не ваш профиль.',
+      discarded: 'Сюда попадает всё, что бот не счёл заказом: болтовня, вакансии, реклама. Пока ничего.',
     }[S.filter];
     return html`<div class="empty"><div class="t">Пока пусто</div>${msg}</div>`;
   }
@@ -128,13 +129,26 @@ function emptyState() {
   return html`<div class="empty"><div class="t">Здесь пока тихо</div>Новые подходящие заказы появятся после ближайшей проверки. Можно запустить её сейчас.<br><button class="btn" type="button" data-act="scan" style="margin-top:16px">Проверить сейчас</button></div>`;
 }
 
+function discardedHtml(m) {
+  const link = safeUrl(m.link);
+  return html`<article class="card muted-card" data-id="${m.id}">
+    <div class="meta"><span class="age"><i></i>${m.age_label}</span><span>${m.chat}</span>${m.demo ? html`<span class="demo-tag">демо</span>` : ''}</div>
+    <p class="raw-text">${m.text}</p>
+    ${m.author ? html`<p class="mono note-sm" style="margin-top:8px">${m.author}</p>` : ''}
+    <div class="foot"><span class="mono">бот не счёл заказом</span><div class="acts">
+      ${link ? html`<a class="ib" href="${link}" target="_blank" rel="noopener noreferrer" aria-label="Открыть в Telegram">${I.link}</a>` : ''}
+      <button class="go" type="button" data-act="promote" data-id="${m.id}">${I.plus}Это заказ</button></div></div>
+  </article>`;
+}
+
 export function paintList(anim = false) {
   const list = $('#list');
   if (!list) return;
   const items = S.feed?.items || [];
   list.classList.toggle('anim', anim);
   $('#shown').textContent = S.feed ? `показано ${items.length}` : '';
-  paint(list, items.length ? items.map((o, i) => cardHtml(o, i)) : emptyState());
+  const draw = S.filter === 'discarded' ? (o) => discardedHtml(o) : cardHtml;
+  paint(list, items.length ? items.map((o, i) => draw(o, i)) : emptyState());
 }
 
 export async function refreshFeed({ anim = false } = {}) {
@@ -234,6 +248,17 @@ export const feedActions = {
   dn: (el) => askWhy(+el.dataset.id),
   'connect-tg': () => openConnect('telegram'),
   'open-chats': () => openChats(),
+  promote: async (el) => {
+    el.disabled = true;
+    try {
+      const r = await post(`/discarded/${el.dataset.id}/promote`);
+      toast('Добавил в ленту. Оцените его: так бот научится.', { action: 'Открыть', onAction: () => openOrder(r.order.id) });
+      await refreshFeed();
+    } catch (e) {
+      toast(e.message);
+      el.disabled = false;
+    }
+  },
 };
 
 export async function onNewOrders(ids) {

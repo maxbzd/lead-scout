@@ -25,6 +25,7 @@ from ..profile import (
 from ..runtime import Runtime
 from ..secrets_store import mask
 from ..sources.telegram import LoginError, TelegramProblem
+from ..util import fmt_age, minutes_ago
 from .auth import COOKIE, MAX_AGE, Auth, client_ip, require_auth
 
 public = APIRouter(prefix="/api")
@@ -100,6 +101,8 @@ def list_orders(request: Request, filter: str = "all", sort: str = "score", q: s
     rt = rt_of(request)
     db = rt.db
     profile = load_profile(db)
+    if filter == "discarded":
+        return _discarded_feed(rt, q, limit)
     where = FILTERS.get(filter, FILTERS["all"])
     args: list = []
     if q.strip():
@@ -110,12 +113,7 @@ def list_orders(request: Request, filter: str = "all", sort: str = "score", q: s
         args += [like] * 4
     limit = max(1, min(200, limit))
     rows = db.all(store.ORDER_SELECT + f" WHERE {where} ORDER BY {ORDER_BY.get(sort, ORDER_BY['score'])} LIMIT ?", (*args, limit))
-    counts = {}
-    for key, cond in FILTERS.items():
-        counts[key] = db.scalar(
-            "SELECT COUNT(*) FROM orders o JOIN messages m ON m.id=o.message_id JOIN chats c ON c.id=m.chat_id WHERE " + cond, default=0)
-    hot_sum = db.scalar(
-        "SELECT SUM(COALESCE(o.budget_rub_max,o.budget_rub_min)) FROM orders o WHERE " + FILTERS["hot"] + " AND o.period='fixed'", default=0) or 0
+    counts, hot_sum = _counts(rt)
     cards = [present.order_card(r, profile) for r in rows]
     if cards:
         marks = ",".join("?" * len(cards))
@@ -132,6 +130,45 @@ def list_orders(request: Request, filter: str = "all", sort: str = "score", q: s
         "hot_sum": hot_sum,
         "total_read": db.scalar("SELECT COUNT(*) FROM messages WHERE posted_at>=?", (rt.since(7 * 24 * 60),), 0),
     }
+
+
+def _counts(rt: Runtime) -> tuple[dict, int]:
+    db = rt.db
+    counts = {
+        key: db.scalar("SELECT COUNT(*) FROM orders o JOIN messages m ON m.id=o.message_id JOIN chats c ON c.id=m.chat_id WHERE " + cond, default=0)
+        for key, cond in FILTERS.items()
+    }
+    counts["discarded"] = store.count_discarded(db)
+    hot_sum = db.scalar(
+        "SELECT SUM(COALESCE(o.budget_rub_max,o.budget_rub_min)) FROM orders o WHERE " + FILTERS["hot"] + " AND o.period='fixed'", default=0) or 0
+    return counts, hot_sum
+
+
+def _discarded_feed(rt: Runtime, q: str, limit: int) -> dict:
+    """Всё, что бот не счёл заказом: смотрите и возвращайте в ленту кнопкой «Это заказ»."""
+    rows = store.list_discarded(rt.db, q.strip(), max(1, min(200, limit)))
+    items = []
+    for r in rows:
+        age = fmt_age(minutes_ago(r["posted_at"]))
+        items.append({
+            "id": r["id"], "kind": "message", "text": r["text"][:900], "chat": r["chat_title"], "age_label": age,
+            "author": ("@" + r["author_username"]) if r["author_username"] else (r["author_name"] or ""),
+            "link": store.chat_link({"username": r["chat_username"], "tg_id": r["chat_tg"]}, r["tg_msg_id"]),
+            "demo": bool(r["chat_demo"]),
+        })
+    counts, hot_sum = _counts(rt)
+    return {"items": items, "counts": counts, "hot_sum": hot_sum, "kind": "messages",
+            "total_read": rt.db.scalar("SELECT COUNT(*) FROM messages WHERE posted_at>=?", (rt.since(7 * 24 * 60),), 0)}
+
+
+@router.post("/discarded/{message_id}/promote")
+async def promote_discarded(message_id: int, request: Request) -> dict:
+    rt = rt_of(request)
+    oid = await rt.pipeline.promote(message_id)
+    if oid is None:
+        raise HTTPException(409, "Это сообщение уже есть в ленте или повторяет другой заказ")
+    rt.bus.publish({"type": "orders", "ids": [oid]})
+    return {"order": _card(rt, oid)}
 
 
 def _row(rt: Runtime, order_id: int) -> dict:

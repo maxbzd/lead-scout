@@ -22,6 +22,7 @@ log = logging.getLogger("leadscout.pipeline")
 
 DUP_THRESHOLD = 0.72
 SAME_AUTHOR_THRESHOLD = 0.45
+SAME_CHAT_THRESHOLD = 0.85  # в одном чате похожий текст чаще всего другая задача, а не повтор
 TONE_BY_NAME = {"short": "short", "warm": "warm", "formal": "formal"}
 
 
@@ -66,11 +67,23 @@ class Pipeline:
                 log.exception("retry failed")
         return n
 
-    async def _process(self, raw: RawMessage, text: str, mid: int) -> int | None:
+    async def promote(self, message_id: int) -> int | None:
+        """«Это заказ»: берём отброшенное сообщение и обрабатываем его без отбора."""
+        row = self.db.one("SELECT * FROM messages WHERE id=?", (message_id,))
+        if not row or self.db.one("SELECT 1 FROM orders WHERE message_id=?", (message_id,)):
+            return None
+        store.set_message_status(self.db, message_id, "new")
+        raw = store.raw_from_row(row)
+        raw.reply_to = None
+        return await self._process(raw, (raw.text or "").strip(), message_id, force=True)
+
+    async def _process(self, raw: RawMessage, text: str, mid: int, force: bool = False) -> int | None:
         chat = self.db.one("SELECT * FROM chats WHERE id=?", (raw.chat_id,)) or {}
         if raw.reply_to and self._handle_reply(raw, mid):
             return None
-        if not self._is_candidate(text):
+        strict = self._is_candidate(text)
+        lenient = force or (not strict and self._recall() and ex.maybe_order(text))
+        if not strict and not lenient:
             store.set_message_status(self.db, mid, "noise")
             return None
         if self._attach_duplicate(raw, mid, text, chat):
@@ -83,8 +96,13 @@ class Pipeline:
             log.exception("extract failed, using rules")
             ext = hint
         if not ext.is_order:
-            store.set_message_status(self.db, mid, "noise")
-            return None
+            # правила сочли это заказом, а нейросеть нет (или заказ без явных слов): в режиме «ничего не пропускать» показываем с пометкой
+            if force or (self._recall() and (hint.is_order or (self.llm.name != "claude" and lenient))):
+                ext.is_order = True
+                ext.flags = [*ext.flags, ex.Flag("doubt", "Не уверен, что это заказ: похоже по формулировке", "low")]
+            else:
+                store.set_message_status(self.db, mid, "noise")
+                return None
 
         profile = load_profile(self.db)
         view = self._view(ext, text, raw, chat)
@@ -99,8 +117,12 @@ class Pipeline:
         return order_id
 
     # ------------------------------------------------------- проверки ----
+    def _recall(self) -> bool:
+        return load_profile(self.db).recall
+
     def _is_candidate(self, text: str) -> bool:
-        if len(ex.squash(text)) < 40:
+        short = 20 if self._recall() else 40
+        if len(ex.squash(text)) < short:
             return False
         if self.llm.name == "claude":
             pos, seeker, ads = ex.order_signals(text)
@@ -138,7 +160,11 @@ class Pipeline:
             sim = ex.similarity(o["text"], text)
             same_author = bool(raw.author_id) and o.get("author_id") == raw.author_id
             # один и тот же человек публикует заказ в нескольких чатах, часто чуть переписав текст
-            if ex.content_hash(o["text"]) == h or sim >= DUP_THRESHOLD or (same_author and sim >= SAME_AUTHOR_THRESHOLD):
+            if o.get("chat_id") == raw.chat_id:
+                is_dup = ex.content_hash(o["text"]) == h or sim >= SAME_CHAT_THRESHOLD
+            else:
+                is_dup = ex.content_hash(o["text"]) == h or sim >= DUP_THRESHOLD or (same_author and sim >= SAME_AUTHOR_THRESHOLD)
+            if is_dup:
                 store.add_source(self.db, o["id"], raw.chat_id, mid, store.chat_link(chat, raw.tg_msg_id), iso(raw.posted_at))
                 self.db.run("UPDATE orders SET dup_count=dup_count+1 WHERE id=?", (o["id"],))
                 store.set_message_status(self.db, mid, "dup")

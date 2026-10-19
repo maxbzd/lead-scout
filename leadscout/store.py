@@ -108,15 +108,42 @@ def unprocessed_messages(db: Database, limit: int = 40) -> list[RawMessage]:
     """Записанные, но не обработанные сообщения старше двух минут (свежие ещё могут быть в работе)."""
     rows = db.all("SELECT * FROM messages WHERE status='new' AND fetched_at<? ORDER BY id LIMIT ?",
                   (iso(now_utc() - timedelta(minutes=2)), limit))
-    out = []
-    for r in rows:
-        flags = r.get("author_flags")
-        out.append(RawMessage(
-            chat_id=r["chat_id"], tg_msg_id=r["tg_msg_id"], text=r["text"], posted_at=parse_iso(r["posted_at"]) or now_utc(),
-            author_id=r["author_id"], author_username=r["author_username"], author_name=r["author_name"],
-            author_flags=flags if isinstance(flags, dict) else {}, reply_to=r["reply_to"], replies_count=r["replies_count"] or 0,
-        ))
-    return out
+    return [raw_from_row(r) for r in rows]
+
+
+def raw_from_row(r: dict) -> RawMessage:
+    flags = r.get("author_flags")
+    return RawMessage(
+        chat_id=r["chat_id"], tg_msg_id=r["tg_msg_id"], text=r["text"], posted_at=parse_iso(r["posted_at"]) or now_utc(),
+        author_id=r["author_id"], author_username=r["author_username"], author_name=r["author_name"],
+        author_flags=flags if isinstance(flags, dict) else {}, reply_to=r["reply_to"], replies_count=r["replies_count"] or 0,
+    )
+
+
+DISCARDED_DAYS = 7
+DISCARDED_WHERE = "m.status='noise' AND m.posted_at>=? AND LENGTH(m.text)>=20"
+
+
+def discarded_since() -> str:
+    return iso(now_utc() - timedelta(days=DISCARDED_DAYS))
+
+
+def count_discarded(db: Database) -> int:
+    return db.scalar(f"SELECT COUNT(*) FROM messages m WHERE {DISCARDED_WHERE}", (discarded_since(),), 0)
+
+
+def list_discarded(db: Database, q: str = "", limit: int = 100) -> list[dict]:
+    """Сообщения, которые бот не счёл заказом. Показываем их, чтобы ничего не пропало молча."""
+    args: list = [discarded_since()]
+    where = DISCARDED_WHERE
+    if q:
+        where += " AND ulower(m.text) LIKE ? ESCAPE '\\'"
+        args.append("%" + q.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    return db.all(
+        "SELECT m.id, m.text, m.posted_at, m.author_username, m.author_name, m.tg_msg_id, c.title AS chat_title, "
+        "c.username AS chat_username, c.tg_id AS chat_tg, c.is_demo AS chat_demo FROM messages m JOIN chats c ON c.id=m.chat_id "
+        f"WHERE {where} ORDER BY m.posted_at DESC LIMIT ?", (*args, limit),
+    )
 
 
 def set_message_status(db: Database, message_id: int, status: str) -> None:
@@ -152,7 +179,7 @@ def order_by_message(db: Database, message_id: int) -> dict | None:
 def recent_orders(db: Database, days: int = 14) -> list[dict]:
     since = iso(now_utc() - timedelta(days=days))
     return db.all(
-        "SELECT o.id, o.title, o.dup_count, m.text, m.author_id FROM orders o JOIN messages m ON m.id=o.message_id "
+        "SELECT o.id, o.title, o.dup_count, m.text, m.author_id, m.chat_id FROM orders o JOIN messages m ON m.id=o.message_id "
         "WHERE o.created_at>=? ORDER BY o.id DESC LIMIT 800",
         (since,),
     )
@@ -238,6 +265,8 @@ def set_feedback(db: Database, order_id: int, kind: str | None, reason: str | No
     row = db.one("SELECT score FROM orders WHERE id=?", (order_id,))
     if kind in {"up", "down"}:
         db.run("UPDATE orders SET feedback=?, feedback_reason=?, feedback_at=? WHERE id=?", (kind, reason, now, order_id))
+        if kind == "up":  # вы считаете, что бот отсеял зря: возвращаем в ленту
+            db.run("UPDATE orders SET verdict='maybe', score=MAX(score,50) WHERE id=? AND verdict IN ('skip','scam')", (order_id,))
         db.run("DELETE FROM feedback_events WHERE order_id=?", (order_id,))  # у заказа одна актуальная оценка
         db.run("INSERT INTO feedback_events(order_id,kind,reason,score_at,created_at) VALUES(?,?,?,?,?)",
                (order_id, kind, reason, row["score"] if row else None, now))

@@ -42,6 +42,7 @@ async def test_scam_detected(pipe, db, chat_id):
 
 @pytest.mark.asyncio
 async def test_below_minimum_is_skipped(pipe, db, chat_id):
+    save_profile(db, Profile(recall=False))  # строгий режим
     oid = await pipe.process(make_raw(chat_id, CHEAP))
     o = store.get_order(db, oid)
     assert o["verdict"] == "skip"
@@ -51,7 +52,7 @@ async def test_below_minimum_is_skipped(pipe, db, chat_id):
 @pytest.mark.asyncio
 async def test_stop_word(pipe, db, chat_id):
     text = BOT + " Работа бесплатно, ради портфолио"
-    save_profile(db, Profile(stop_words=["бесплатно"]))
+    save_profile(db, Profile(stop_words=["бесплатно"], recall=False))
     oid = await pipe.process(make_raw(chat_id, text))
     assert store.get_order(db, oid)["verdict"] in {"skip", "scam"}
 
@@ -101,9 +102,13 @@ async def test_feedback_changes_learning(pipe, db, chat_id):
 async def test_rescore_after_profile_change(pipe, db, chat_id):
     oid = await pipe.process(make_raw(chat_id, N8N))
     assert store.get_order(db, oid)["verdict"] in {"match", "maybe"}
-    save_profile(db, Profile(min_budget=50000))
+    save_profile(db, Profile(min_budget=50000, recall=False))
     await pipe.rescore_recent()
     assert store.get_order(db, oid)["verdict"] == "skip"
+    save_profile(db, Profile(min_budget=50000, recall=True))
+    await pipe.rescore_recent()
+    o = store.get_order(db, oid)
+    assert o["verdict"] == "maybe" and "на всякий случай" in o["why"]
 
 
 @pytest.mark.asyncio

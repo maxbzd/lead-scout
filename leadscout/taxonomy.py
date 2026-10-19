@@ -42,6 +42,10 @@ TAXONOMY: dict[str, tuple[str, list[str]]] = {
 }
 
 
+# Направления, которые считаем «про ИИ» всегда, даже если их нет в профиле: заказ по ним не прячем
+AI_CORE = frozenset({"llm", "prompt", "rag", "bot", "n8n", "make", "automation", "image"})
+
+
 def _compile(stem: str) -> str:
     esc = re.escape(stem)
     # короткие слова ищем целиком, длинные по началу (чтобы ловить «промпты», «бота»)

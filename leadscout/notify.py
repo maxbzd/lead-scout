@@ -39,7 +39,7 @@ class Notifier:
         sent = 0
         for oid in order_ids:
             row = store.get_order(self.db, oid)
-            if not row or row["verdict"] != "match" or row["score"] < n.instant_threshold:
+            if not row or row["verdict"] not in {"match", "maybe"} or row["score"] < n.instant_threshold:
                 continue
             if row["state"] != "new" or row["feedback"] or row["alert_state"] != "none":
                 continue
@@ -51,7 +51,7 @@ class Notifier:
                 self.db.run("UPDATE orders SET alert_state='queued' WHERE id=?", (oid,))
                 continue
             try:
-                await bot.send_card(row, "Новый заказ")
+                await bot.send_card(row, "Новый заказ" if row["verdict"] == "match" else "Возможно, подойдёт")
             except Exception:
                 log.warning("send failed for %s", oid, exc_info=True)
                 continue
@@ -60,10 +60,10 @@ class Notifier:
         return sent
 
     # -------------------------------------------------------- сводка ----
-    def _digest_rows(self, since_iso: str, limit: int = 6) -> list[dict]:
+    def _digest_rows(self, since_iso: str, limit: int = 15) -> list[dict]:
         return self.db.all(
-            store.ORDER_SELECT + " WHERE o.verdict='match' AND o.state='new' AND o.feedback IS NULL AND o.offered_at IS NULL "
-            "AND o.alert_state NOT IN ('sent','digested') AND o.created_at>=? ORDER BY o.score DESC, o.posted_at DESC LIMIT ?",
+            store.ORDER_SELECT + " WHERE o.verdict IN ('match','maybe') AND o.state='new' AND o.feedback IS NULL AND o.offered_at IS NULL "
+            "AND o.alert_state NOT IN ('sent','digested') AND o.created_at>=? ORDER BY (o.verdict='match') DESC, o.score DESC, o.posted_at DESC LIMIT ?",
             (since_iso, limit),
         )
 
@@ -80,7 +80,12 @@ class Notifier:
             self.db.set_setting("notify_state", state)
             return 0
         title = "Доброе утро! Вот что нашлось" if (local_now(load_profile(self.db).tz, now).hour < 12) else "Свежие заказы"
-        await bot.send_digest(rows, f"{title}: {len(rows)}")
+        rejected = self.db.scalar("SELECT COUNT(*) FROM orders WHERE verdict IN ('skip','scam') AND state!='hidden' AND created_at>=?", (iso(since),), 0)
+        discarded = store.count_discarded(self.db)
+        note = ""
+        if rejected or discarded:
+            note = f"Отсеяно: {rejected}, не похоже на заказ: {discarded}. Загляните в «Отсеянные» и «Отброшено», если боитесь что-то пропустить."
+        await bot.send_digest(rows, f"{title}: {len(rows)}", note)
         state["last_digest"] = iso(now)  # отмечаем только после отправки: при сбое сводка уйдёт в следующий раз
         self.db.set_setting("notify_state", state)
         for r in rows:

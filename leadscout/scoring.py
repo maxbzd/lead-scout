@@ -5,7 +5,7 @@ from __future__ import annotations
 from .extract import Flag, stop_word_hit
 from .models import OrderView, Score
 from .profile import Profile
-from .taxonomy import DRAFT_PHRASE, join_phrase, labels, order_ids, skill_ids
+from .taxonomy import AI_CORE, DRAFT_PHRASE, join_phrase, labels, order_ids, skill_ids
 from .util import fmt_money
 
 
@@ -89,6 +89,9 @@ def finalize(score: Score, order: OrderView, profile: Profile, flags: list[Flag]
     hit = stop_word_hit(f"{order.title} {order.text}", profile.stop_words)
     high = [f for f in all_flags if f.level == "high"]
     verdict = score.verdict
+    doubt = any(f.code == "doubt" for f in all_flags)
+    has_skills = bool(set(order_ids(order_keys(order))) & (profile.keys() | AI_CORE))  # про ИИ или про ваши навыки
+    recall = profile.recall
 
     if high:
         s = min(s, 35)
@@ -96,13 +99,11 @@ def finalize(score: Score, order: OrderView, profile: Profile, flags: list[Flag]
         why = high[0].text + ". Рекомендую пропустить."
         fit = [{"ok": False, "text": f.text} for f in all_flags] + [x for x in fit if x.get("ok")]
     elif hit:
-        s = min(s, 30)
-        verdict = "skip"
-        why = f"В заказе есть стоп-слово «{hit}»."
+        s, verdict = _demote(s, recall)
+        why = (f"Показываю на всякий случай: в заказе стоп-слово «{hit}»." if recall else f"В заказе есть стоп-слово «{hit}».")
         fit.insert(0, {"ok": False, "text": f"Стоп-слово из вашего списка: «{hit}»"})
     elif below_minimum(order, profile):
-        s = min(s, 40)
-        verdict = "skip"
+        s, verdict = _demote(s, recall)
         b = order.budget_rub
         if order.period == "fixed":
             why = f"Бюджет {fmt_money(b)} ниже вашего минимума {fmt_money(profile.min_budget)}."
@@ -110,6 +111,8 @@ def finalize(score: Score, order: OrderView, profile: Profile, flags: list[Flag]
         else:
             why = "Ставка ниже вашей."
             fit.insert(0, {"ok": False, "text": "Ставка ниже вашей"})
+        if recall:
+            why = "Показываю на всякий случай. " + why
     else:
         medium = [f for f in all_flags if f.level == "medium"]
         if medium:
@@ -122,9 +125,22 @@ def finalize(score: Score, order: OrderView, profile: Profile, flags: list[Flag]
         if verdict == "maybe" and s >= 70:
             verdict = "match"
         if verdict in {"match", "maybe"} and s < 45:
-            verdict = "skip"
+            if recall and (has_skills or doubt):
+                s, verdict = 45, "maybe"  # лучше лишний раз показать, чем пропустить
+            else:
+                verdict = "skip"
+        elif verdict == "skip" and recall and (has_skills or doubt) and s >= 30:
+            s, verdict = 45, "maybe"
+        if doubt and verdict in {"match", "maybe"}:
+            s, verdict = min(max(s, 45), 69), "maybe"
+            why = "Не уверен, что это заказ, но похоже. " + why
 
     return Score(score=s, verdict=verdict, why=why, fit=fit[:7], flags=all_flags, scored_by=score.scored_by)
+
+
+def _demote(s: int, recall: bool) -> tuple[int, str]:
+    """Заказ нарушает ваше правило (стоп-слово, бюджет). В режиме «ничего не пропускать» он остаётся в ленте как «под вопросом»."""
+    return (min(max(s, 45), 55), "maybe") if recall else (min(s, 30), "skip")
 
 
 def skill_phrase(profile: Profile, order: OrderView, limit: int = 3) -> str:

@@ -93,7 +93,7 @@ async def test_extract_falls_back_to_rule_hints_when_zero():
 async def test_score_applies_hard_rules_over_model():
     out = {"score": 95, "verdict": "match", "why": "Отлично", "fit": [{"ok": True, "text": "Навыки"}], "red_flags": []}
     llm, c = llm_with([resp(out)])
-    p = Profile(min_budget=100000)
+    p = Profile(min_budget=100000, recall=False)
     s = await llm.score(view(), p, Learned())
     assert c.messages.calls[0]["model"] == "claude-sonnet-5-5"
     assert s.verdict == "skip" and s.score <= 40  # бюджет ниже минимума важнее мнения модели
