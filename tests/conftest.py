@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 
 from leadscout import store
 from leadscout.config import Settings
@@ -8,6 +9,9 @@ from leadscout.db import Database
 from leadscout.llm.rules import RuleLLM
 from leadscout.models import RawMessage
 from leadscout.pipeline import Pipeline
+from leadscout.web.app import create_app
+
+H = {"X-Requested-With": "leadscout"}
 
 
 @pytest.fixture()
@@ -40,3 +44,16 @@ def make_raw(chat_id: int, text: str, minutes_ago: int = 5, author="ivan_k", **k
         posted_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
         author_id=kw.pop("author_id", 42), author_username=author, author_name="Иван", **kw,
     )
+
+
+@pytest.fixture()
+def client(tmp_path):
+    s = Settings(data_dir=tmp_path, password="secret-pw", demo=True, run_worker=False)
+    with TestClient(create_app(s)) as c:
+        yield c
+
+@pytest.fixture()
+def authed(client):
+    r = client.post("/api/login", json={"password": "secret-pw"}, headers=H)
+    assert r.status_code == 200
+    return client
