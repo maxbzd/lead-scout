@@ -113,8 +113,18 @@ def list_orders(request: Request, filter: str = "all", sort: str = "score", q: s
             "SELECT COUNT(*) FROM orders o JOIN messages m ON m.id=o.message_id JOIN chats c ON c.id=m.chat_id WHERE " + cond, default=0)
     hot_sum = db.scalar(
         "SELECT SUM(COALESCE(o.budget_rub_max,o.budget_rub_min)) FROM orders o WHERE " + FILTERS["hot"] + " AND o.period='fixed'", default=0) or 0
+    cards = [present.order_card(r, profile) for r in rows]
+    if cards:
+        marks = ",".join("?" * len(cards))
+        drafts = {d["order_id"]: d for d in rt.db.all(
+            f"SELECT order_id, text, price FROM drafts WHERE tone=? AND variant=0 AND order_id IN ({marks})",
+            (profile.tone, *[c["id"] for c in cards]))}
+        for c, r in zip(cards, rows, strict=True):
+            d = drafts.get(c["id"])
+            c["draft"] = {"text": d["text"], "price": d["price"]} if d else None
+            c["contact_url"] = r.get("contact_url") or ""
     return {
-        "items": [present.order_card(r, profile) for r in rows],
+        "items": cards,
         "counts": counts,
         "hot_sum": hot_sum,
         "total_read": db.scalar("SELECT COUNT(*) FROM messages WHERE posted_at>=?", (rt.since(7 * 24 * 60),), 0),
