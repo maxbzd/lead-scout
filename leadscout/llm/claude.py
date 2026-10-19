@@ -181,6 +181,7 @@ def _text_of(resp: Any) -> str:
 
 class ClaudeLLM:
     name = "claude"
+    scored_by = "claude"
 
     def __init__(self, api_key: str, model_fast: str, model_smart: str, db: Database | None = None,
                  client: anthropic.AsyncAnthropic | None = None):
@@ -357,7 +358,7 @@ class ClaudeLLM:
             why=clip(str(data.get("why") or ""), 150),
             fit=fit,
             flags=flags,
-            scored_by="claude",
+            scored_by=self.scored_by,
         )
         return finalize(raw, order, profile, order.flags + flags)
 
@@ -427,6 +428,10 @@ class FallbackLLM:
         self.fallback = fallback or RuleLLM()
         self.name = primary.name
         self.failures = 0
+
+    @property
+    def deferred(self) -> bool:
+        return getattr(self.primary, "deferred", False)
 
     @property
     def last_error(self) -> str | None:

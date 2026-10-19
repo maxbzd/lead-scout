@@ -47,6 +47,7 @@ class Settings:
     demo: bool = False
 
     anthropic_api_key: str = ""
+    ai_api_key: str = ""
     model_fast: str = "claude-haiku-5-5"
     model_smart: str = "claude-sonnet-5-5"
 
@@ -81,6 +82,7 @@ class Settings:
             tz=os.environ.get("LS_TZ", "Europe/Moscow"),
             demo=_bool("LS_DEMO", False),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+            ai_api_key=os.environ.get("LS_AI_API_KEY", "").strip(),
             model_fast=os.environ.get("LS_MODEL_FAST", "claude-haiku-5-5"),
             model_smart=os.environ.get("LS_MODEL_SMART", "claude-sonnet-5-5"),
             telegram_api_id=_int("TELEGRAM_API_ID", 0),

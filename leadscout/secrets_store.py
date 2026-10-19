@@ -19,6 +19,7 @@ from .db import Database
 
 ENV_MAP = {
     "anthropic_key": "anthropic_api_key",
+    "ai_key": "ai_api_key",
     "tg_api_id": "telegram_api_id",
     "tg_api_hash": "telegram_api_hash",
     "tg_session": "telegram_session",

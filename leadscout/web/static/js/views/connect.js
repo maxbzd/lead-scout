@@ -1,6 +1,6 @@
 // Подключения: Telegram-аккаунт, бот, ключ Claude. Каждое по шагам, простыми словами.
 
-import { del, post } from '../api.js';
+import { del, get, post } from '../api.js';
 import { S, loadStatus } from '../state.js';
 import { $, closeSheet, html, I, openSheet, raw, setSheet, sheetHead, toast } from '../ui.js';
 import { openChats } from './chats.js';
@@ -14,7 +14,8 @@ const stopPoll = () => { clearInterval(pollTimer); pollTimer = null; };
 
 export async function openConnect(kind) {
   await loadStatus().catch(() => {});
-  C = { kind, step: firstStep(kind), error: '', busy: false, phone: '' };
+  C = { kind, step: firstStep(kind), error: '', busy: false, phone: '', presets: null, provider: '' };
+  if (C.step === 'ai-pick') await loadPresets();
   openSheet(view(), { onClose: () => { stopPoll(); C = null; renderProfileSafe(); } });
   if (C.step === 'pair') startPoll();
   focusInput();
@@ -32,8 +33,14 @@ function firstStep(kind) {
     if (st.bot.state === 'ready') return st.bot.paired ? 'bot-done' : 'pair';
     return 'bot-token';
   }
-  return st.llm.mode === 'claude' ? 'ai-done' : 'ai-key';
+  return st.llm.mode !== 'rules' ? 'ai-done' : 'ai-pick';
 }
+
+async function loadPresets() {
+  try { C.presets = (await get('/connect/ai/providers')).items; } catch (e) { C.presets = []; C.error = e.message; }
+}
+
+const preset = () => C.presets?.find((p) => p.id === C.provider);
 
 function focusInput() {
   setTimeout(() => document.querySelector('#sheet [data-autofocus]')?.focus(), 80);
@@ -118,9 +125,36 @@ function view() {
         <div class="okbox">${I.check}<div><b>@${b.username}</b><p>Присылает свежие заказы, утреннюю сводку и принимает ваши оценки кнопками. Команды: /digest, /stats, /chats, /add, /pause.</p></div></div>
         <div class="btnrow">${b.pair_link ? '' : html`<a class="btn" href="https://t.me/${b.username}" target="_blank" rel="noopener noreferrer">Открыть бота</a>`}${b.source === 'app' ? html`<button class="btn danger" type="button" data-act="bot-off">Отключить</button>` : html`<button class="btn" type="button" data-act="close">Готово</button>`}</div>`;
     }
+    case 'ai-pick':
+      return html`${sheetHead('ИИ-режим')}
+        <p class="lead-p">Сейчас бот работает по простым правилам: этого хватает, чтобы начать. ИИ лучше понимает смысл сообщений, точнее оценивает заказы и пишет живые отклики. Выберите сервис.</p>
+        <div class="picks">
+          ${(C.presets || []).map((p) => html`<button class="pick" type="button" data-act="ai-choose" data-v="${p.id}"><b>${p.label}</b><span>${p.note}</span></button>`)}
+          <button class="pick" type="button" data-act="ai-choose" data-v="claude"><b>Claude (платно, точнее всех)</b><span>Лучшее качество отборов и текстов. Оплата по расходу, смотрите «Аналитику».</span></button>
+        </div>
+        ${err()}`;
+    case 'ai-free': {
+      const p = preset();
+      if (!p) return '';
+      return html`${sheetHead(p.label)}
+        <p class="lead-p">${p.note}</p>
+        <ol class="howto">
+          ${p.key_url ? html`<li>Откройте <a href="${p.key_url}" target="_blank" rel="noopener noreferrer">страницу ключей</a>, войдите и создайте ключ.</li>` : html`<li>Укажите адрес сервиса и название модели.</li>`}
+          <li>Вставьте ключ ниже${p.needs_key ? '' : ' (для своей модели он не нужен)'}.</li>
+          <li>Нажмите проверку: приложение сделает один пробный запрос.</li>
+        </ol>
+        ${p.needs_key ? field('ai-free-key', 'Ключ', { type: 'password', ph: 'Вставьте ключ', auto: true }) : ''}
+        ${p.id === 'custom' || p.id === 'ollama' ? field('ai-free-url', 'Адрес сервиса', { type: 'url', ph: 'https://…/v1', value: p.base_url }) : ''}
+        ${field('ai-free-model', 'Модель', { ph: p.model || 'название модели', value: p.model })}
+        <p class="mono note-sm">Названия моделей у сервисов меняются. Если проверка пишет «модель не найдена», возьмите актуальное имя на странице сервиса.</p>
+        ${p.rpd < 100000 ? html`<p class="capnote">Дневной лимит этого тарифа примерно ${p.rpd} запросов. Когда он кончится, бот до утра работает по правилам.</p>` : ''}
+        ${p.id === 'gemini' ? html`<p class="capnote">Важно: на бесплатном тарифе Google может использовать присланные тексты для улучшения своих продуктов. Читайте условия сервиса, в чатах бывают чужие данные.</p>` : ''}
+        ${err()}
+        <div class="btnrow"><button class="btn" type="button" data-act="ai-back">Назад</button><button class="btn pri" type="button" data-act="ai-free-go" ${busyAttr()}>Проверить и подключить</button></div>`;
+    }
     case 'ai-key':
       return html`${sheetHead('ИИ-режим (Claude)')}
-        <p class="lead-p">Сейчас бот работает по простым правилам: этого хватает, чтобы начать. С ключом Claude он понимает смысл сообщений, точнее оценивает заказы и пишет живые отклики.</p>
+        <p class="lead-p">С ключом Claude бот понимает смысл сообщений, точнее оценивает заказы и пишет живые отклики.</p>
         <ol class="howto">
           <li>Откройте <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>, войдите и создайте ключ (Create Key).</li>
           <li>Пополните баланс на несколько долларов. Расход зависит от числа чатов: начните с 5–10 чатов, а точную сумму смотрите в «Аналитике».</li>
@@ -128,13 +162,15 @@ function view() {
         </ol>
         ${field('ai-key', 'Ключ Claude', { type: 'password', ph: 'sk-ant-…', auto: true })}
         ${err()}
-        <div class="btnrow one"><button class="btn pri" type="button" data-act="ai-key" ${busyAttr()}>Проверить и подключить</button></div>`;
+        <div class="btnrow"><button class="btn" type="button" data-act="ai-back">Назад</button><button class="btn pri" type="button" data-act="ai-key" ${busyAttr()}>Проверить и подключить</button></div>`;
     case 'ai-done': {
       const l = st.llm;
       const u = l.usage;
+      const free = l.mode === 'ai';
       return html`${sheetHead('ИИ-режим включён')}
-        <div class="okbox">${I.check}<div><b>Claude подключён</b><p>${l.error ? html`<span class="warn-t">Сейчас есть проблема: ${l.error}. Пока работаю по простым правилам.</span>` : 'Бот понимает смысл заказов и пишет отклики.'}</p>${u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
-        <div class="btnrow">${l.source === 'app' ? html`<button class="btn danger" type="button" data-act="ai-off">Отключить</button>` : ''}<button class="btn pri" type="button" data-act="close">Готово</button></div>`;
+        <div class="okbox">${I.check}<div><b>${free ? `Подключено: ${l.model}` : 'Claude подключён'}</b><p>${l.error ? html`<span class="warn-t">Сейчас есть проблема: ${l.error}. Пока работаю по простым правилам.</span>` : 'Бот понимает смысл заказов и пишет отклики.'}</p>
+          ${free ? html`<p>Сегодня запросов: ${l.used_today} из ${l.limit_today}. Когда лимит кончится, бот до утра работает по правилам.</p>` : u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
+        <div class="btnrow">${l.source === 'app' ? html`<button class="btn danger" type="button" data-act="${free ? 'ai-free-off' : 'ai-off'}">Отключить</button>` : ''}<button class="btn pri" type="button" data-act="close">Готово</button></div>`;
     }
     default:
       return '';
@@ -143,8 +179,15 @@ function view() {
 
 function rerender(step) {
   if (!C) return;
+  const same = !step || step === C.step;
+  // после ошибки введённое не должно пропадать: запоминаем поля и возвращаем их на место
+  const kept = same ? Array.from(document.querySelectorAll('#sheet input[id]')).map((i) => [i.id, i.value]) : [];
   if (step) C.step = step;
   setSheet(view());
+  for (const [id, value] of kept) {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = value;
+  }
   focusInput();
 }
 
@@ -231,10 +274,31 @@ export const connectActions = {
     toast('Claude подключён');
     rerender('ai-done');
   }),
+  'ai-choose': async (el) => {
+    C.error = '';
+    if (el.dataset.v === 'claude') return rerender('ai-key');
+    C.provider = el.dataset.v;
+    rerender('ai-free');
+  },
+  'ai-back': async () => { C.error = ''; if (!C.presets) await loadPresets(); rerender('ai-pick'); },
+  'ai-free-go': () => run(async () => {
+    const p = preset();
+    await post('/connect/ai', { provider: p.id, key: val('ai-free-key'), model: val('ai-free-model'), base_url: val('ai-free-url') });
+    await loadStatus();
+    toast('ИИ подключён');
+    rerender('ai-done');
+  }),
+  'ai-free-off': () => run(async () => {
+    await del('/connect/ai');
+    await loadStatus();
+    await loadPresets();
+    rerender('ai-pick');
+  }),
   'ai-off': () => run(async () => {
     await del('/connect/claude');
     await loadStatus();
-    rerender('ai-key');
+    await loadPresets();
+    rerender('ai-pick');
   }),
 };
 

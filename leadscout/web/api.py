@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .. import learning, present, stats, store
 from ..bot import BotError
 from ..llm.base import LLMUnavailable
+from ..llm.openai_compat import PROVIDERS
 from ..profile import (
     CAPACITY_MIN_BUDGET,
     Notifications,
@@ -304,7 +305,7 @@ def status(request: Request) -> dict:
         {"id": "cases", "ok": bool(profile.cases), "label": f"Портфолио: {len(profile.cases)}" if profile.cases else "Портфолио для откликов"},
         {"id": "telegram", "ok": tg["state"] == "ready", "label": "Telegram подключён"},
         {"id": "bot", "ok": bool(bot["paired"]), "label": "Бот в Telegram подключён"},
-        {"id": "ai", "ok": llm["mode"] == "claude" and not llm["error"], "label": "ИИ-режим включён"},
+        {"id": "ai", "ok": llm["mode"] != "rules" and not llm["error"], "label": "ИИ-режим включён"},
     ]
     return {
         "demo": rt.demo_enabled() and tg["state"] != "ready",
@@ -377,7 +378,7 @@ async def import_profile(body: ImportIn, request: Request) -> dict:
     patch = await rt.llm.parse_profile(body.text, load_profile(rt.db))
     if not patch:
         raise HTTPException(422, "Не нашёл в тексте ничего полезного. Опишите, что вы делаете и сколько берёте")
-    return {"patch": patch, "smart": rt.llm.name == "claude"}
+    return {"patch": patch, "smart": rt.llm.name != "rules"}
 
 
 @router.post("/profile/rescore")
@@ -503,6 +504,33 @@ async def connect_claude(body: KeyIn, request: Request) -> dict:
 def disconnect_claude(request: Request) -> dict:
     rt = rt_of(request)
     rt.disconnect_claude()
+    return {"llm": rt.llm_status()}
+
+
+class AiIn(BaseModel):
+    provider: str = Field(max_length=20)
+    key: str = Field(default="", max_length=300)
+    model: str = Field(default="", max_length=120)
+    base_url: str = Field(default="", max_length=300)
+
+
+@router.get("/connect/ai/providers")
+def ai_providers() -> dict:
+    return {"items": [{"id": k, **{f: v[f] for f in ("label", "base_url", "model", "needs_key", "key_url", "note", "rpd")}}
+                      for k, v in PROVIDERS.items()]}
+
+
+@router.post("/connect/ai")
+async def connect_ai(body: AiIn, request: Request) -> dict:
+    rt = rt_of(request)
+    await rt.connect_ai(body.provider, body.key, body.model, body.base_url)
+    return {"llm": rt.llm_status()}
+
+
+@router.delete("/connect/ai")
+def disconnect_ai(request: Request) -> dict:
+    rt = rt_of(request)
+    rt.disconnect_ai()
     return {"llm": rt.llm_status()}
 
 
