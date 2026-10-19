@@ -2,7 +2,7 @@
 
 import { api, on } from './api.js';
 import { S, cache, loadProfile, loadStatus } from './state.js';
-import { $, $$, closeSheet, debounce, html, I, paint, sheetOpen, toast } from './ui.js';
+import { $, $$, closeSheet, debounce, html, I, onPopState, paint, sheetOpen, toast } from './ui.js';
 import { chatActions } from './views/chats.js';
 import { connectActions } from './views/connect.js';
 import { detailActions, openOrder, priceActions } from './views/detail.js';
@@ -170,6 +170,28 @@ function onInput(e) {
   if (t.dataset.bind) onProfileInput(t);
 }
 
+// Свайп вниз за верх шторки закрывает её
+function enableSwipeClose() {
+  const sheet = $('#sheet');
+  let y0 = null;
+  let dy = 0;
+  sheet.addEventListener('touchstart', (e) => {
+    y0 = sheet.scrollTop <= 0 && e.touches.length === 1 ? e.touches[0].clientY : null;
+    dy = 0;
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (y0 === null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', () => {
+    if (y0 === null) return;
+    sheet.style.transform = '';
+    if (dy > 110) closeSheet();
+    y0 = null;
+  });
+}
+
 // -------------------------------------------------------------- запуск ----
 let started = false;
 
@@ -199,7 +221,10 @@ async function start() {
   await show(r.tab, { push: false });
   updateScanPill();
   connectStream();
-  if (r.order) openOrder(r.order);
+  if (r.order) {
+    history.replaceState(null, '', location.pathname);
+    openOrder(r.order);
+  }
   started = true;
 }
 
@@ -216,8 +241,13 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && started) refreshSoft(); });
   window.addEventListener('hashchange', () => {
     const r = routeFromHash();
-    if (r.order && started) openOrder(r.order);
+    if (r.order && started) {
+      history.replaceState(null, '', location.pathname);
+      openOrder(r.order);
+    }
   });
+  window.addEventListener('popstate', onPopState);
+  enableSwipeClose();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   start();
 }
