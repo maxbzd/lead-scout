@@ -230,7 +230,7 @@ async def test_quiet_hours_queue_then_digest(bot, pipe, chat_id, db, settings):
 async def test_big_orders_break_quiet_hours(bot, pipe, chat_id, db, settings):
     svc, api = bot
     n = Notifier(db, settings, lambda: svc)
-    big = "Нужен RAG-чат по базе знаний на Python с LLM для юрфирмы. Бюджет 150 000 ₽, срок 10 дней. @bigfirm"
+    big = "Нужен Telegram-бот с RAG по базе знаний и LLM для юрфирмы. Бюджет 150 000 ₽, срок 10 дней. @bigfirm"
     night_mode(db)
     oid = await make_order(pipe, chat_id, big, minutes_ago=3)
     assert store.get_order(db, oid)["score"] >= 90
