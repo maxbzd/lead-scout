@@ -1,24 +1,4 @@
-import pytest
-from fastapi.testclient import TestClient
-
-from leadscout.config import Settings
-from leadscout.web.app import create_app
-
 H = {"X-Requested-With": "leadscout"}
-
-
-@pytest.fixture()
-def client(tmp_path):
-    s = Settings(data_dir=tmp_path, password="secret-pw", demo=True, run_worker=False)
-    with TestClient(create_app(s)) as c:
-        yield c
-
-
-@pytest.fixture()
-def authed(client):
-    r = client.post("/api/login", json={"password": "secret-pw"}, headers=H)
-    assert r.status_code == 200
-    return client
 
 
 def test_requires_login(client):

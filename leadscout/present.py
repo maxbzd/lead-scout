@@ -82,7 +82,8 @@ def rate_per_day(row: dict) -> float | None:
 def rate_label(rate: float | None) -> str | None:
     if rate is None:
         return None
-    return f"≈ {rate / 1000:.1f} тыс. в день".replace(".", ",")
+    k = f"{rate / 1000:.1f}".replace(".", ",").removesuffix(",0")
+    return f"≈ {k} тыс. ₽ в день"
 
 
 def skills_view(row: dict, profile: Profile) -> list[dict]:

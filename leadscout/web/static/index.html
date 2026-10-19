@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scout — заказы из Telegram</title>
+<meta name="description" content="Личный ИИ-скаут: читает Telegram-чаты, находит фриланс-заказы под ваши навыки и пишет отклики.">
+<meta name="theme-color" content="#06060C">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scout">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8E7BFF"/><stop offset=".55" stop-color="#4FD8E8"/><stop offset="1" stop-color="#FFB27A"/></linearGradient>
+    <linearGradient id="cy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8E7BFF"/><stop offset="1" stop-color="#4FD8E8"/></linearGradient>
+    <linearGradient id="dim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8582A6"/><stop offset="1" stop-color="#B9B6D2"/></linearGradient>
+  </defs>
+</svg>
+<div class="ambient" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+
+<div id="boot" class="boot" aria-label="Загрузка"><div class="orb"><div class="core"></div></div></div>
+<main id="login" class="login" hidden></main>
+
+<div class="shell" id="app" hidden>
+  <header class="top">
+    <div class="brand"><span class="dot"></span>Scout</div>
+    <div class="tools">
+      <button class="sq" type="button" id="search-btn" data-act="search" aria-pressed="false" aria-label="Поиск"><span class="ic" data-i="search"></span></button>
+      <button class="pill" type="button" data-act="scan" aria-label="Проверить чаты сейчас"><span class="live"></span><span id="scan-txt">…</span></button>
+    </div>
+    <div class="sbar" id="sbar" hidden><input id="q" type="search" placeholder="Поиск по заказам и чатам" autocomplete="off" aria-label="Поиск"></div>
+  </header>
+  <div id="view"></div>
+</div>
+
+<nav class="tabbar" id="tabbar" hidden aria-label="Разделы">
+  <div class="tabs" role="tablist">
+    <button class="tab" type="button" role="tab" data-act="tab" data-v="feed" aria-selected="true"><span class="ic" data-i="feed"></span><span>Заказы</span></button>
+    <button class="tab" type="button" role="tab" data-act="tab" data-v="stats" aria-selected="false"><span class="ic" data-i="stats"></span><span>Аналитика</span></button>
+    <button class="tab" type="button" role="tab" data-act="tab" data-v="me" aria-selected="false"><span class="ic" data-i="me"></span><span>Профиль</span></button>
+  </div>
+</nav>
+
+<button class="newbar" type="button" id="newbar" data-act="newbar" aria-live="polite">
+  <span class="o"></span><span><b id="nb-title"></b><span id="nb-sub"></span></span><span class="go">Смотреть</span>
+</button>
+
+<div class="veil" id="veil" hidden data-act="veil"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<noscript><p style="padding:24px;color:#fff">Для работы приложения нужен JavaScript.</p></noscript>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>
