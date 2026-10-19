@@ -135,16 +135,20 @@ export function toast(msg, opts = {}) {
 
 // ------------------------------------------------------------------ шторки ----
 const stack = [];
+let pendingBack = false; // кнопка «назад» закрывает шторку, а не приложение
+
 
 export function openSheet(content, { onClose, wide = false } = {}) {
   const veil = document.getElementById('veil');
   const sheet = document.getElementById('sheet');
   document.getElementById('toast')?.classList.remove('on');
+  if (!veil.hidden) stack.pop()?.onClose?.(); // новая шторка поверх открытой заменяет её
   paint(sheet, html`<div class="grab"></div>${content}`);
   sheet.classList.toggle('wide', wide);
   veil.hidden = false;
   document.body.style.overflow = 'hidden';
   sheet.scrollTop = 0;
+  if (!pendingBack && !history.state?.sheet) history.pushState({ sheet: 1 }, '');
   stack.push({ onClose });
   const first = sheet.querySelector('[data-autofocus]');
   if (first) setTimeout(() => first.focus(), 60);
@@ -156,14 +160,24 @@ export function setSheet(content) {
   paint(sheet, html`<div class="grab"></div>${content}`);
 }
 
-export function closeSheet() {
+export function closeSheet({ fromPop = false } = {}) {
   const veil = document.getElementById('veil');
   if (veil.hidden) return;
   veil.hidden = true;
   document.body.style.overflow = '';
   const top = stack.pop();
   paint(document.getElementById('sheet'), '');
+  if (!fromPop && history.state?.sheet) {
+    pendingBack = true;
+    history.back();
+  }
   top?.onClose?.();
+}
+
+// Системная кнопка «назад» или свайп: закрываем шторку
+export function onPopState() {
+  if (pendingBack) { pendingBack = false; return; }
+  if (!document.getElementById('veil').hidden) closeSheet({ fromPop: true });
 }
 
 export const sheetOpen = () => !document.getElementById('veil').hidden;
