@@ -197,7 +197,7 @@ def night_mode(db, **kw):
 
 
 @pytest.mark.asyncio
-async def test_instant_alert_for_hot_only(bot, pipe, chat_id, db, settings):
+async def test_instant_alert_for_matches_and_maybes(bot, pipe, chat_id, db, settings):
     svc, api = bot
     n = Notifier(db, settings, lambda: svc)
     day_mode(db)
@@ -206,7 +206,7 @@ async def test_instant_alert_for_hot_only(bot, pipe, chat_id, db, settings):
     row = store.get_order(db, hot)
     assert row["score"] >= 90
     sent = await n.after_scan([hot, mid])
-    assert sent == 1 and len(api.sent()) == 1
+    assert sent == 2 and len(api.sent()) == 2  # присылаем и «подойдёт», и «возможно подойдёт»
     assert store.get_order(db, hot)["alert_state"] == "sent"
     assert await n.after_scan([hot]) == 0  # второй раз не шлём
 

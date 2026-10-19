@@ -186,7 +186,7 @@ class BotService:
         await self.api.call("sendMessage", chat_id=self.owner_id, text=text, parse_mode="HTML", reply_markup=markup,
                             link_preview_options={"is_disabled": True})
 
-    async def send_digest(self, rows: list[dict], title: str) -> None:
+    async def send_digest(self, rows: list[dict], title: str, note: str = "") -> None:
         if not rows or not self.owner_id:
             return
         lines = [f"<b>{esc(title)}</b>", ""]
@@ -195,6 +195,8 @@ class BotService:
             c = order_card(r, load_profile(self.db))
             lines.append(f"{i}. <b>{esc(clip(c['title'], 60))}</b>\n    {c['score']}% · {esc(c['budget']['label'])} · {esc(c['deadline_label'])}")
             buttons.append([btn(f"{i}. {clip(c['title'], 34)}", f"show:{r['id']}")])
+        if note:
+            lines += ["", esc(note)]
         url = self.app_url()
         if url:
             buttons.append([btn("Открыть приложение", url=url)])
