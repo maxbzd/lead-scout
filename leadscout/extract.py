@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from .util import squash
 
@@ -365,13 +366,19 @@ def shingles(tokens: list[str], n: int = 3) -> set[str]:
     return {" ".join(tokens[i: i + n]) for i in range(len(tokens) - n + 1)}
 
 
+@lru_cache(maxsize=4096)
+def _prepared(text: str) -> tuple[frozenset[str], frozenset[str]]:
+    tokens = normalize(text)
+    return frozenset(tokens), frozenset(shingles(tokens))
+
+
 def similarity(a: str, b: str) -> float:
-    ta, tb = normalize(a), normalize(b)
-    sa, sb = shingles(ta), shingles(tb)
+    # разбор текста запоминаем: при дедупликации один заказ сравнивается с сотнями других
+    wa, sa = _prepared(a)
+    wb, sb = _prepared(b)
     if not sa or not sb:
         return 0.0
     shingle = len(sa & sb) / len(sa | sb)
-    wa, wb = set(ta), set(tb)
     words = len(wa & wb) / len(wa | wb) if wa and wb else 0.0
     return max(shingle, words - 0.1)
 

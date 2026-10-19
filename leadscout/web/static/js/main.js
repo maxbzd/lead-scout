@@ -2,7 +2,7 @@
 
 import { api, on } from './api.js';
 import { S, cache, loadProfile, loadStatus } from './state.js';
-import { $, $$, closeSheet, debounce, html, I, onPopState, paint, sheetOpen, toast } from './ui.js';
+import { $, $$, closeSheet, debounce, html, I, onPopState, paint, sheetHooks, sheetOpen, toast } from './ui.js';
 import { chatActions } from './views/chats.js';
 import { connectActions } from './views/connect.js';
 import { detailActions, openOrder, priceActions } from './views/detail.js';
@@ -101,19 +101,20 @@ function handleEvent(ev) {
     updateScanPill();
     if (!ev.running) refreshSoft().then(() => ev.ids?.length && onNewOrders(ev.ids));
   } else if (ev.type === 'orders') {
-    if (!sheetOpen()) {
-      clearTimeout(freshTimer);
-      freshTimer = setTimeout(refreshSoft, 400);
-    }
+    clearTimeout(freshTimer);
+    freshTimer = setTimeout(refreshSoft, 400);
   } else if (ev.type === 'status' || ev.type === 'chats') {
-    loadStatus().then(() => { updateScanPill(); if (S.tab === 'feed' && !sheetOpen()) refreshFeed(); }).catch(() => {});
+    loadStatus().then(() => { updateScanPill(); if (S.tab === 'feed') { if (sheetOpen()) staleBehindSheet = true; else refreshFeed(); } }).catch(() => {});
   }
 }
+
+let staleBehindSheet = false;
 
 async function refreshSoft() {
   await loadStatus().catch(() => {});
   updateScanPill();
-  if (sheetOpen()) return;
+  if (sheetOpen()) { staleBehindSheet = true; return; } // обновим, как только шторку закроют
+  staleBehindSheet = false;
   if (S.tab === 'feed') await refreshFeed();
   else if (S.tab === 'stats') { S.stats = null; await renderStats(); }
 }
@@ -247,6 +248,7 @@ function boot() {
     }
   });
   window.addEventListener('popstate', onPopState);
+  sheetHooks.afterClose = () => { if (staleBehindSheet) refreshSoft(); };
   enableSwipeClose();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   start();

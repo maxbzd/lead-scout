@@ -45,8 +45,10 @@ def learned(db: Database, limit: int = 14) -> Learned:
         up = r["feedback"] == "up"
         w = UP_WEIGHT if up else DOWN_WEIGHT
         decay = 1.0 if i < 40 else 0.5
-        for k in _view_keys(r):
-            weights[k] = max(-6.0, min(6.0, weights.get(k, 0.0) + w * decay))
+        # «дёшево», «не те сроки», «подозрительно» не значит «навык не мой»: такие 👎 навыки не штрафуют
+        if up or (r.get("feedback_reason") or "other") in {"profile", "other"}:
+            for k in _view_keys(r):
+                weights[k] = max(-6.0, min(6.0, weights.get(k, 0.0) + w * decay))
         chat_w[r["chat_id"]] = chat_w.get(r["chat_id"], 0.0) + (1 if up else -1)
         if i < limit:
             reason = store.FEEDBACK_REASONS.get(r.get("feedback_reason") or "", "")
@@ -111,13 +113,13 @@ def refresh_suggestions(db: Database, profile: Profile) -> int:
     )
     if len(low) >= 3:
         top = sorted(r["b"] for r in low)[int(len(low) * 0.75) - 1]
-        new_min = int(-(-top // 5000) * 5000)
+        new_min = int(-(-(top + 1) // 5000) * 5000)  # строго выше этих заказов, иначе порог их не отсечёт
         if new_min >= profile.min_budget + 2500:
             key = f"min:{new_min}"
             if not has_open("raise_min", key):
                 store.add_insight(
                     db, "raise_min",
-                    f"Вы {len(low)} раза отметили заказы как «Низкий бюджет». Поднять минимум до {fmt_money(new_min)}?",
+                    f"Вы {len(low)} {'раза' if len(low) % 10 in (2, 3, 4) and not 11 <= len(low) % 100 <= 14 else 'раз'} отметили заказы как «Низкий бюджет». Поднять минимум до {fmt_money(new_min)}?",
                     {"key": key, "min_budget": new_min},
                 )
                 created += 1
