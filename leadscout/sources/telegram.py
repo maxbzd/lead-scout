@@ -20,9 +20,9 @@ log = logging.getLogger("leadscout.telegram")
 
 Listener = Callable[[RawMessage], Awaitable[None]]
 
-FIRST_SCAN_LIMIT = 150
+FIRST_SCAN_LIMIT = 500
 FIRST_SCAN_HOURS = 72
-CATCHUP_LIMIT = 300
+CATCHUP_LIMIT = 1000
 
 AUTH_LOST = (
     errors.AuthKeyUnregisteredError,

@@ -30,6 +30,7 @@ class Profile(BaseModel):
     capacity: str = "free"
     tz: str = "Europe/Moscow"
     unpaid_check: bool = True
+    recall: bool = True  # «ничего не пропускать»: сомнительное показываем, а не прячем
 
     @field_validator("skills", "stop_words")
     @classmethod
@@ -62,7 +63,7 @@ class Profile(BaseModel):
 
 class Notifications(BaseModel):
     instant: bool = True
-    instant_threshold: int = Field(default=90, ge=50, le=100)
+    instant_threshold: int = Field(default=45, ge=30, le=100)
     quiet: bool = True
     quiet_start: str = "23:00"
     quiet_end: str = "08:00"

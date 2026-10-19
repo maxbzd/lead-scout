@@ -435,3 +435,8 @@ a.btn.pri { color: #0A0820; }
 .pr .track { margin-top: 34px; }
 .inp::placeholder, .sbar input::placeholder, textarea::placeholder { color: rgba(133, 130, 166, .6); }
 .newbar .go { color: #0A0820; display: inline-flex; align-items: center; }
+
+/* список «Отброшено» */
+.muted-card { background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .02)); }
+.raw-text { font-size: 13.5px; line-height: 1.5; color: var(--ink2); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+a.ib { text-decoration: none; }

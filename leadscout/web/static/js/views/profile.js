@@ -38,6 +38,11 @@ export async function renderProfile() {
   paint(view, html`<section class="view"><div class="set" style="margin-top:14px">
     <div class="glass" id="ready"></div>
 
+    <div class="glass">
+      <div class="sw-row"><div><div class="t">Ничего не пропускать</div><div class="s">Сомнительные заказы тоже показываю с пометкой. Всё, что бот отбросил, лежит в ленте в разделе «Отброшено».</div></div>
+        <button class="sw" id="recall-sw" role="switch" aria-checked="${!!p.recall}" data-act="recall-toggle" aria-label="Ничего не пропускать"></button></div>
+    </div>
+
     <div class="glass field">
       <div class="card-head"><div class="mono">моя загрузка</div><span class="saved" id="saved">сохранено</span></div>
       <div class="seg" id="cap" style="margin:0"></div>
@@ -187,7 +192,7 @@ function toggle(label, sub, key, on) {
 function paintNotif() {
   const n = S.notif;
   paint($('#notif'), html`<div class="mono" style="margin-bottom:4px">уведомления в Telegram</div>
-    ${toggle('Сразу, если заказ свежий и подходит на 90%', 'Заказы разбирают за минуты', 'instant', n.instant)}
+    ${toggle('Сразу присылать новые заказы', 'И подходящие, и «возможно подойдут». Заказы разбирают за минуты', 'instant', n.instant)}
     ${toggle('Не беспокоить ночью', `С ${n.quiet_start} до ${n.quiet_end}, кроме заказов от ${money(n.quiet_override_budget)}`, 'quiet', n.quiet)}
     ${n.quiet ? html`<div class="time-row"><label>С <input class="inp time" type="time" value="${n.quiet_start}" data-bind="quiet_start"></label><label>до <input class="inp time" type="time" value="${n.quiet_end}" data-bind="quiet_end"></label></div>` : ''}
     ${toggle('Утренняя сводка', 'Всё лучшее за ночь одним сообщением', 'digest', n.digest)}
@@ -279,6 +284,11 @@ export const profileActions = {
     S.profile.capacity = el.dataset.v;
     S.profile.min_budget = S.presets[el.dataset.v];
     paintMoney();
+    changed();
+  },
+  'recall-toggle': (el) => {
+    S.profile.recall = !S.profile.recall;
+    el.setAttribute('aria-checked', String(S.profile.recall));
     changed();
   },
   'skill-add': () => { if (addTo(S.profile.skills, $('#skill-in'))) { paintSkills(); changed(); } },
