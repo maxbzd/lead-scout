@@ -103,7 +103,7 @@ export async function openOrder(id, { focus } = {}) {
   }
   const tone = o.draft?.tone || S.profile?.tone || 'warm';
   D = { o, tone, variant: o.draft?.variant || 0, price: o.draft?.price ?? defaultPrice(o), text: o.draft?.text || '', busy: false };
-  openSheet(body(o), { onClose: () => { D = null; location.hash.startsWith('#/o/') && history.replaceState(null, '', '#/' + (S.tab === 'feed' ? '' : S.tab)); } });
+  openSheet(body(o), { onClose: () => { D = null; } });
   const ta = $('#draft');
   if (ta) {
     ta.value = D.text;
