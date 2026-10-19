@@ -215,11 +215,12 @@ export function paintConns() {
   const b = st.bot;
   const bSub = b.state === 'ready' ? (b.paired ? '@' + b.username : 'Нажмите Start в боте, чтобы закончить') : b.error || 'Присылает заказы и сводку';
   const l = st.llm;
-  const lSub = l.mode === 'claude' ? (l.error ? l.error : l.usage ? `≈ $${(l.usage.usd || 0).toFixed(2)} в этом месяце` : 'Понимает смысл заказов') : 'Сейчас простые правила. С ключом точнее';
+  const lSub = l.mode === 'claude' ? (l.error ? l.error : l.usage ? `Claude · ≈ $${(l.usage.usd || 0).toFixed(2)} в этом месяце` : 'Claude понимает смысл заказов')
+    : l.mode === 'ai' ? (l.error ? l.error : `${l.model} · сегодня ${l.used_today} из ${l.limit_today} запросов`) : 'Сейчас простые правила. С ИИ точнее';
   paint(el, [
     connRow('tg', 'Telegram', tgOk ? 'подключён' : tg.state === 'demo' ? 'демо' : 'не подключён', tgSub, tgOk),
     connRow('bot', 'Бот', b.state === 'ready' && b.paired ? 'подключён' : b.state === 'ready' ? 'ждёт Start' : 'не подключён', bSub, b.state === 'ready' && b.paired),
-    connRow('ai', 'ИИ Claude', l.mode === 'claude' ? 'включён' : 'выключен', lSub, l.mode === 'claude'),
+    connRow('ai', 'ИИ', l.mode !== 'rules' ? 'включён' : 'выключен', lSub, l.mode !== 'rules'),
   ]);
 }
 

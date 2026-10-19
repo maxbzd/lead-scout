@@ -82,7 +82,7 @@ function body(o) {
     </div>
     ${o.flags?.length ? html`<div class="flags">${o.flags.map((f) => html`<div class="flag">${I.alert}${f.text}</div>`)}</div>` : ''}
     ${priceBlock(o)}
-    <div class="sec"><span class="mono">Почему так${o.scored_by === 'claude' ? ' · оценил ИИ' : ''}</span><ul class="fit">${(o.fit || []).map((f) => html`<li class="${f.ok ? 'ok' : 'no'}">${f.ok ? I.check : I.alert}<span>${f.text}</span></li>`)}</ul></div>
+    <div class="sec"><span class="mono">Почему так${(o.scored_by && o.scored_by !== 'rules') ? ' · оценил ИИ' : ''}</span><ul class="fit">${(o.fit || []).map((f) => html`<li class="${f.ok ? 'ok' : 'no'}">${f.ok ? I.check : I.alert}<span>${f.text}</span></li>`)}</ul></div>
     ${clientBlock(o)}
     ${sourcesBlock(o)}
     ${draftBlock(o)}
