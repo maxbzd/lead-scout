@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 import uvicorn
@@ -36,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
               f"  Чтобы задать свой, укажите LS_PASSWORD в файле .env\n{bar}\n", flush=True)
 
     app = create_app(settings)
-    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=True, forwarded_allow_ips="*", log_level="info")
+    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=True, forwarded_allow_ips=os.environ.get("LS_TRUSTED_PROXIES", "127.0.0.1"), log_level="info")
     return 0
 
 

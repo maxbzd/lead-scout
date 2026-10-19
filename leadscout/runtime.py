@@ -27,6 +27,7 @@ from .util import iso, now_utc, parse_iso
 log = logging.getLogger("leadscout.runtime")
 
 CONCURRENCY = 4
+START_TIMEOUT = 25
 
 
 class Runtime:
@@ -130,7 +131,10 @@ class Runtime:
             self.purge_demo()
             reader = TelegramReader(self.db, *creds)
             reader.listener = self.ingest_one
-            await reader.start()
+            try:
+                await asyncio.wait_for(reader.start(), START_TIMEOUT)  # без связи с Telegram приложение всё равно открывается
+            except TimeoutError:
+                reader.state, reader.error = "error", "Telegram не отвечает. Проверьте интернет на сервере"
             self.source = reader
         elif self.demo_enabled():
             demo = DemoSource(self.db)
