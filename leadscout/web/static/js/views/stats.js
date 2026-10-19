@@ -11,6 +11,7 @@ export async function renderStats() {
   const view = $('#view');
   if (!S.stats) paint(view, html`<section class="view"><div class="skeleton" style="height:240px;margin-top:14px"></div><div class="skeleton" style="height:140px;margin-top:12px"></div></section>`);
   try { await loadStats(); } catch (e) { toast(e.message); if (!S.stats) return; }
+  if (S.tab !== 'stats') return; // пока грузилось, ушли на другую вкладку
   const st = S.stats;
   const acc = st.accuracy;
   const series = acc.series.filter((p) => p.value !== null);
@@ -83,7 +84,9 @@ function lineChart(host, series) {
   const W = 320; const H = 150; const pl = 30; const pr = 14; const pt = 16; const pb = 24;
   const n = series.length;
   const X = (i) => pl + ((W - pl - pr) * i) / Math.max(1, n - 1);
-  const Y = (v) => pt + (H - pt - pb) * (1 - (v - 40) / 60);
+  const known = series.filter((p) => p.value !== null).map((p) => p.value);
+  const lo = Math.max(0, Math.min(40, Math.floor(Math.min(...known, 40) / 10) * 10)); // низкая точность не уезжает за график
+  const Y = (v) => pt + (H - pt - pb) * (1 - (v - lo) / (100 - lo));
   const pts = series.map((p, i) => (p.value === null ? null : [X(i), Y(p.value), p]));
   const segs = [];
   let cur = [];
@@ -91,7 +94,7 @@ function lineChart(host, series) {
   if (cur.length) segs.push(cur);
   const path = segs.map((s) => s.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')).join(' ');
   const area = segs.filter((s) => s.length > 1).map((s) => `M${s[0][0]} ${H - pb} ${s.map((p) => `L${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')} L${s[s.length - 1][0]} ${H - pb} Z`).join(' ');
-  const grid = [50, 75, 100].map((g) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(g)}" y2="${Y(g)}" stroke="rgba(255,255,255,.08)"/><text x="${pl - 6}" y="${Y(g) + 3.5}" text-anchor="end" fill="#8582A6" font-family="${MONO}" font-size="9.5">${g}</text>`).join('');
+  const grid = [Math.round((lo + 100) / 2), 100].map((g) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(g)}" y2="${Y(g)}" stroke="rgba(255,255,255,.08)"/><text x="${pl - 6}" y="${Y(g) + 3.5}" text-anchor="end" fill="#8582A6" font-family="${MONO}" font-size="9.5">${g}</text>`).join('');
   const xl = series.map((p, i) => `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" fill="#8582A6" font-family="${MONO}" font-size="9.5">нед ${p.week}</text>`).join('');
   const last = pts.filter(Boolean).pop();
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Точность подбора по неделям"><defs><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#8E7BFF"/><stop offset="1" stop-color="#4FD8E8"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8E7BFF" stop-opacity=".30"/><stop offset="1" stop-color="#8E7BFF" stop-opacity="0"/></linearGradient></defs>${grid}${xl}` +

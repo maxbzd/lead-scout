@@ -90,7 +90,9 @@ async def test_feedback_changes_learning(pipe, db, chat_id):
     store.set_feedback(db, oid, "down", "budget")
     learned = learning.learned(db)
     assert learned.examples and not learned.examples[0].liked
-    assert learned.skill_weights["telegram"] < 0
+    assert "telegram" not in learned.skill_weights, "«низкий бюджет» не значит «навык не мой»"
+    store.set_feedback(db, oid, "down", "profile")
+    assert learning.learned(db).skill_weights["telegram"] < 0
     store.set_feedback(db, oid, None)
     assert learning.learned(db).examples == []
 

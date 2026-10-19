@@ -21,6 +21,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    for noisy in ("httpx", "httpcore"):  # в адресах запросов к Telegram есть токен бота
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     settings = Settings.load()
     if args.demo:
         settings.demo = True

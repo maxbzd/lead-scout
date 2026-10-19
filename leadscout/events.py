@@ -18,6 +18,14 @@ class EventBus:
             except asyncio.QueueFull:
                 pass
 
+    def open_queue(self) -> asyncio.Queue[dict[str, Any]]:
+        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
+        self._subs.add(q)
+        return q
+
+    def close_queue(self, q: asyncio.Queue[dict[str, Any]]) -> None:
+        self._subs.discard(q)
+
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
         self._subs.add(q)

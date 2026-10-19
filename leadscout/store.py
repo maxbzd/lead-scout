@@ -9,7 +9,7 @@ from typing import Any
 from .db import Database, dumps
 from .extract import content_hash
 from .models import RawMessage
-from .util import iso, now_utc
+from .util import iso, now_utc, parse_iso
 
 # ------------------------------------------------------------------ чаты ----
 
@@ -37,10 +37,12 @@ def add_chat(db: Database, title: str, *, link: str | None = None, username: str
     if tg_id is not None:
         row = db.one("SELECT id FROM chats WHERE tg_id=?", (tg_id,))
         if row:
+            db.run("UPDATE chats SET enabled=1 WHERE id=?", (row["id"],))
             return row["id"]
     if username:
         row = db.one("SELECT id FROM chats WHERE lower(username)=lower(?)", (username,))
         if row:
+            db.run("UPDATE chats SET enabled=1 WHERE id=?", (row["id"],))
             return row["id"]
     return db.run(
         "INSERT INTO chats(tg_id,username,link,title,members,enabled,is_demo,added_at) VALUES(?,?,?,?,?,?,?,?)",
@@ -95,6 +97,26 @@ def insert_message(db: Database, raw: RawMessage) -> tuple[int, bool]:
          dumps(raw.author_flags or {}), raw.reply_to, raw.replies_count, iso(raw.posted_at), iso(), content_hash(raw.text)),
     )
     return mid, True
+
+
+def is_unprocessed(db: Database, message_id: int) -> bool:
+    row = db.one("SELECT status FROM messages WHERE id=?", (message_id,))
+    return bool(row) and row["status"] == "new"
+
+
+def unprocessed_messages(db: Database, limit: int = 40) -> list[RawMessage]:
+    """Записанные, но не обработанные сообщения старше двух минут (свежие ещё могут быть в работе)."""
+    rows = db.all("SELECT * FROM messages WHERE status='new' AND fetched_at<? ORDER BY id LIMIT ?",
+                  (iso(now_utc() - timedelta(minutes=2)), limit))
+    out = []
+    for r in rows:
+        flags = r.get("author_flags")
+        out.append(RawMessage(
+            chat_id=r["chat_id"], tg_msg_id=r["tg_msg_id"], text=r["text"], posted_at=parse_iso(r["posted_at"]) or now_utc(),
+            author_id=r["author_id"], author_username=r["author_username"], author_name=r["author_name"],
+            author_flags=flags if isinstance(flags, dict) else {}, reply_to=r["reply_to"], replies_count=r["replies_count"] or 0,
+        ))
+    return out
 
 
 def set_message_status(db: Database, message_id: int, status: str) -> None:
@@ -216,12 +238,12 @@ def set_feedback(db: Database, order_id: int, kind: str | None, reason: str | No
     row = db.one("SELECT score FROM orders WHERE id=?", (order_id,))
     if kind in {"up", "down"}:
         db.run("UPDATE orders SET feedback=?, feedback_reason=?, feedback_at=? WHERE id=?", (kind, reason, now, order_id))
+        db.run("DELETE FROM feedback_events WHERE order_id=?", (order_id,))  # у заказа одна актуальная оценка
         db.run("INSERT INTO feedback_events(order_id,kind,reason,score_at,created_at) VALUES(?,?,?,?,?)",
                (order_id, kind, reason, row["score"] if row else None, now))
     else:
         db.run("UPDATE orders SET feedback=NULL, feedback_reason=NULL, feedback_at=NULL WHERE id=?", (order_id,))
-        db.run("DELETE FROM feedback_events WHERE order_id=? AND id=(SELECT MAX(id) FROM feedback_events WHERE order_id=?)",
-               (order_id, order_id))
+        db.run("DELETE FROM feedback_events WHERE order_id=?", (order_id,))
 
 
 def set_state(db: Database, order_id: int, state: str) -> None:

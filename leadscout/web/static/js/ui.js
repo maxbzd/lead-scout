@@ -160,6 +160,8 @@ export function setSheet(content) {
   paint(sheet, html`<div class="grab"></div>${content}`);
 }
 
+export const sheetHooks = { afterClose: null };
+
 export function closeSheet({ fromPop = false } = {}) {
   const veil = document.getElementById('veil');
   if (veil.hidden) return;
@@ -172,6 +174,7 @@ export function closeSheet({ fromPop = false } = {}) {
     history.back();
   }
   top?.onClose?.();
+  sheetHooks.afterClose?.();
 }
 
 // Системная кнопка «назад» или свайп: закрываем шторку

@@ -29,6 +29,7 @@ export async function renderProfile() {
   if (!S.profile || !S.notif) {
     paint(view, html`<section class="view"><div class="skeleton" style="height:200px;margin-top:14px"></div></section>`);
     try { await Promise.all([loadProfile(), loadNotif(), loadStatus()]); } catch (e) { toast(e.message); return; }
+    if (S.tab !== 'me') return;
   } else {
     loadStatus().then(() => paintReady()).catch(() => {});
   }
@@ -127,8 +128,7 @@ const flashSaved = debounce(() => { const s = $('#saved'); if (s) { s.classList.
 
 const saveProfile = debounce(async () => {
   try {
-    const r = await put('/profile', S.profile);
-    S.profile = r.profile;
+    await put('/profile', S.profile); // ответ не применяем: пока шёл запрос, вы могли успеть напечатать ещё
     flashSaved();
     setTimeout(() => refreshFeed(), 900); // фоновый пересчёт успевает отработать
   } catch (e) { toast(e.message); }

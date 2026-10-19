@@ -102,8 +102,9 @@ export async function openOrder(id, { focus } = {}) {
     return;
   }
   const tone = o.draft?.tone || S.profile?.tone || 'warm';
-  D = { o, tone, variant: o.draft?.variant || 0, price: o.draft?.price ?? defaultPrice(o), text: o.draft?.text || '', busy: false };
-  openSheet(body(o), { onClose: () => { D = null; } });
+  const mine = { o, tone, variant: o.draft?.variant || 0, price: o.draft?.price ?? defaultPrice(o), text: o.draft?.text || '', busy: false };
+  D = mine;
+  openSheet(body(o), { onClose: () => { if (D === mine) D = null; } }); // второй тап по карточке не должен сломать открытую шторку
   const ta = $('#draft');
   if (ta) {
     ta.value = D.text;

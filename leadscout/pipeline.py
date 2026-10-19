@@ -32,6 +32,7 @@ class Pipeline:
         self.settings = settings
         self._lock = asyncio.Lock()
         self._rules = RuleLLM()
+        self._inflight: set[tuple[int, int]] = set()
 
     def set_llm(self, llm: LLM) -> None:
         self.llm = llm
@@ -42,9 +43,30 @@ class Pipeline:
         text = (raw.text or "").strip()
         if not text:
             return None
+        key = (raw.chat_id, raw.tg_msg_id)
+        if key in self._inflight:
+            return None  # то же сообщение уже обрабатывается (пришло и вживую, и при проверке)
         mid, inserted = store.insert_message(self.db, raw)
-        if not inserted:
+        if not inserted and not store.is_unprocessed(self.db, mid):
             return None
+        self._inflight.add(key)
+        try:
+            return await self._process(raw, text, mid)
+        finally:
+            self._inflight.discard(key)
+
+    async def retry_stuck(self, limit: int = 40) -> int:
+        """Сообщения, которые записались, но не успели обработаться (сбой или остановка): пробуем ещё раз."""
+        n = 0
+        for raw in store.unprocessed_messages(self.db, limit):
+            try:
+                if await self.process(raw):
+                    n += 1
+            except Exception:
+                log.exception("retry failed")
+        return n
+
+    async def _process(self, raw: RawMessage, text: str, mid: int) -> int | None:
         chat = self.db.one("SELECT * FROM chats WHERE id=?", (raw.chat_id,)) or {}
         if raw.reply_to and self._handle_reply(raw, mid):
             return None
@@ -98,7 +120,17 @@ class Pipeline:
             return True  # заказчик уточняет, это не отклик
         if len(ex.squash(raw.text)) >= 6:
             store.bump_bids(self.db, order["id"])
+            self.refresh_rec(order["id"])
         return True
+
+    def refresh_rec(self, order_id: int) -> None:
+        """Откликов стало больше: подсказку по цене пересчитываем."""
+        row = self.db.one(store.ORDER_SELECT + " WHERE o.id=?", (order_id,))
+        if not row:
+            return
+        profile = load_profile(self.db)
+        lo, hi, note = recommend_price(self.view_of(row), profile, store.won_amounts(self.db, profile_keys(profile.skills)))
+        self.db.run("UPDATE orders SET rec_min=?, rec_max=?, rec_note=? WHERE id=?", (lo, hi, note, order_id))
 
     def _attach_duplicate(self, raw: RawMessage, mid: int, text: str, chat: dict) -> bool:
         h = ex.content_hash(text)

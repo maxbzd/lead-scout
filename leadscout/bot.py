@@ -377,6 +377,8 @@ class BotService:
         if kind == "fb":
             if parts[1] == "up":
                 store.set_feedback(self.db, oid, "up")
+                if row["state"] == "hidden":
+                    store.set_state(self.db, oid, "new")
                 await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Запомнил: похожих станет больше")
                 await self._mark(chat_id, message_id, row, "👍")
             else:

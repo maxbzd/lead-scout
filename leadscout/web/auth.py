@@ -17,9 +17,10 @@ FAIL_LIMIT = 8
 
 
 class Auth:
-    def __init__(self, password: str, signing_key: bytes):
+    def __init__(self, password: str, signing_key: bytes, db=None):
         self.password = password
         self.key = signing_key
+        self.db = db  # здесь хранится список отозванных входов (после «Выйти» cookie перестаёт работать)
         self._fails: dict[str, deque[float]] = defaultdict(deque)
 
     # --- пароль и подбор -------------------------------------------------
@@ -39,6 +40,10 @@ class Auth:
         return 0
 
     def fail(self, ip: str) -> None:
+        if len(self._fails) > 2000:  # не даём словарю расти бесконечно
+            now = time.monotonic()
+            for k in [k for k, q in self._fails.items() if not q or now - q[-1] > FAIL_WINDOW]:
+                self._fails.pop(k, None)
         self._fails[ip].append(time.monotonic())
 
     def ok(self, ip: str) -> None:
@@ -62,15 +67,26 @@ class Auth:
             payload = f"{exp}.{nonce}"
             if not hmac.compare_digest(sig, self._sign(payload)):
                 return False
-            return int(exp) > time.time()
+            return int(exp) > time.time() and nonce not in self._revoked()
         except (ValueError, TypeError):
             return False
 
+    def _revoked(self) -> list[str]:
+        return (self.db.get_setting("revoked_sessions", []) if self.db else []) or []
+
+    def revoke(self, token: str | None) -> None:
+        """«Выйти»: этот вход больше не действует, даже если cookie украли."""
+        if not token or not self.db:
+            return
+        try:
+            exp, nonce, _ = token.split(".")
+        except ValueError:
+            return
+        self.db.set_setting("revoked_sessions", (self._revoked() + [nonce])[-300:])
+
 
 def client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    # заголовок X-Forwarded-For учитывает сам uvicorn, и только от доверенного прокси
     return request.client.host if request.client else "?"
 
 

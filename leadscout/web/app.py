@@ -39,7 +39,7 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
     app = FastAPI(title="Lead Scout", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.rt = rt
     app.state.settings = settings
-    app.state.auth = Auth(password, rt.secrets.signing_key())
+    app.state.auth = Auth(password, rt.secrets.signing_key(), rt.db)
 
     app.include_router(public)
     app.include_router(router)

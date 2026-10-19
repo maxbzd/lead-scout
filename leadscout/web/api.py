@@ -65,7 +65,8 @@ def login(body: LoginIn, request: Request, response: Response):
 
 
 @public.post("/logout")
-def logout():
+def logout(request: Request):
+    request.app.state.auth.revoke(request.cookies.get(COOKIE))
     r = JSONResponse({"ok": True})
     r.delete_cookie(COOKIE, path="/")
     return r
@@ -102,8 +103,10 @@ def list_orders(request: Request, filter: str = "all", sort: str = "score", q: s
     where = FILTERS.get(filter, FILTERS["all"])
     args: list = []
     if q.strip():
-        where += " AND (ulower(o.title) LIKE ? OR ulower(o.summary) LIKE ? OR ulower(m.text) LIKE ? OR ulower(c.title) LIKE ?)"
-        like = f"%{q.strip().lower()}%"
+        where += (" AND (ulower(o.title) LIKE ? ESCAPE '\\' OR ulower(o.summary) LIKE ? ESCAPE '\\' "
+                  "OR ulower(m.text) LIKE ? ESCAPE '\\' OR ulower(c.title) LIKE ? ESCAPE '\\')")
+        needle = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{needle}%"
         args += [like] * 4
     limit = max(1, min(200, limit))
     rows = db.all(store.ORDER_SELECT + f" WHERE {where} ORDER BY {ORDER_BY.get(sort, ORDER_BY['score'])} LIMIT ?", (*args, limit))
@@ -292,18 +295,18 @@ async def stream(request: Request) -> StreamingResponse:
 
     async def gen():
         yield "retry: 4000\n\n"
-        it = rt.bus.subscribe().__aiter__()
+        q = rt.bus.open_queue()
         try:
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    ev = await asyncio.wait_for(it.__anext__(), timeout=20)
+                    ev = await asyncio.wait_for(q.get(), timeout=20)
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
                 except TimeoutError:
                     yield ": ping\n\n"
         finally:
-            await it.aclose()
+            rt.bus.close_queue(q)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

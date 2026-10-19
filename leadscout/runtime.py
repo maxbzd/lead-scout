@@ -52,6 +52,7 @@ class Runtime:
         self._login: TelegramLogin | None = None
         self._login_started = 0.0
         self._last_maint = 0.0
+        self._reconnect_at = 0.0
         self._sem = asyncio.Semaphore(CONCURRENCY)
 
     # ------------------------------------------------------------ запуск ----
@@ -295,13 +296,14 @@ class Runtime:
     # ------------------------------------------------------ проверка ----
     async def ingest_one(self, raw: RawMessage) -> None:
         """Живое сообщение из Telegram."""
-        ids = await self._ingest([raw])
+        ids = await self._ingest([raw], move_cursor=False)  # курсор двигает только полная проверка, иначе пропустим промежуток
         if ids:
             self.bus.publish({"type": "orders", "ids": ids})
             await self.notifier.after_scan(ids)
 
-    async def _ingest(self, raws: list[RawMessage]) -> list[int]:
+    async def _ingest(self, raws: list[RawMessage], move_cursor: bool = True) -> list[int]:
         new_ids: list[int] = []
+        failed: set[tuple[int, int]] = set()
 
         async def one(raw: RawMessage) -> None:
             async with self._sem:
@@ -309,6 +311,7 @@ class Runtime:
                     oid = await self.pipeline.process(raw)
                 except Exception:
                     log.exception("message failed")
+                    failed.add((raw.chat_id, raw.tg_msg_id))  # останется в базе необработанным, scan повторит
                     return
             if oid:
                 new_ids.append(oid)
@@ -318,8 +321,11 @@ class Runtime:
         await asyncio.gather(*(one(r) for r in plain))
         for r in replies:  # ответы после объявлений: им нужно найти родителя
             await one(r)
-        for r in raws:
-            store.bump_chat_cursor(self.db, r.chat_id, r.tg_msg_id)
+        if move_cursor:
+            for r in raws:
+                if (r.chat_id, r.tg_msg_id) in failed:
+                    continue
+                store.bump_chat_cursor(self.db, r.chat_id, r.tg_msg_id)
         return new_ids
 
     async def scan(self, manual: bool = False) -> dict:
@@ -337,9 +343,12 @@ class Runtime:
                 else:
                     if manual and isinstance(src, DemoSource):
                         src.request_tick()
+                    retried = await self.pipeline.retry_stuck()
                     raws = await src.fetch()
                     result["messages"] = len(raws)
                     ids = await self._ingest(raws)
+                    if retried:
+                        log.info("повторно обработано сообщений: %s", retried)
                     result["new_ids"], result["orders"] = ids, len(ids)
                     if isinstance(src, TelegramReader) and src.state != "ready":
                         result["error"] = src.error
@@ -373,6 +382,7 @@ class Runtime:
         while True:
             try:
                 due = (time.monotonic() - self._last_scan_mono) >= self.settings.scan_minutes * 60
+                await self._reconnect_telegram()
                 if self.source is not None and due:
                     await self.scan()
                 now = datetime.now(UTC)
@@ -387,6 +397,22 @@ class Runtime:
             except Exception:
                 log.exception("scheduler step failed")
             await asyncio.sleep(20)
+
+    async def _reconnect_telegram(self) -> None:
+        """Telegram не ответил при запуске (нет сети, перезагрузка сервера): пробуем снова раз в несколько минут."""
+        src = self.source
+        if not isinstance(src, TelegramReader) or src.state not in {"error", "connecting"}:
+            self._reconnect_at = 0.0
+            return
+        now = time.monotonic()
+        if not self._reconnect_at:
+            self._reconnect_at = now + 180
+            return
+        if now >= self._reconnect_at:
+            self._reconnect_at = 0.0
+            log.info("пробую подключиться к Telegram снова")
+            await self.build_source()
+            self.bus.publish({"type": "status"})
 
     async def _maintenance(self) -> None:
         if time.monotonic() - self._last_maint < 6 * 3600 and self._last_maint:

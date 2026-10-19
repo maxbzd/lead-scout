@@ -41,15 +41,23 @@ export async function loadStatus() {
   return S.status;
 }
 
+let feedSeq = 0;
+
 export async function loadFeed() {
-  const q = new URLSearchParams({ filter: S.filter, sort: S.sort });
-  if (S.q.trim()) q.set('q', S.q.trim());
-  const key = `feed:${S.filter}:${S.sort}`;
+  const my = ++feedSeq;
+  const { filter, sort } = S;
+  const text = S.q.trim();
+  const q = new URLSearchParams({ filter, sort });
+  if (text) q.set('q', text);
+  const key = `feed:${filter}:${sort}`;
   try {
-    S.feed = await get('/orders?' + q.toString());
+    const data = await get('/orders?' + q.toString());
+    if (my !== feedSeq) return S.feed; // за это время запросили другой список: старый ответ не нужен
+    S.feed = data;
     S.online = true;
-    if (!S.q) cache.write(key, S.feed);
+    if (!text) cache.write(key, data);
   } catch (e) {
+    if (my !== feedSeq) return S.feed;
     const old = cache.read(key);
     if (!old) throw e;
     S.feed = old;
