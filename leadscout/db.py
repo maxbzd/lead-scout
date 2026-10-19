@@ -149,6 +149,11 @@ MIGRATIONS: list[str] = [SCHEMA_V1]
 JSON_COLUMNS = {"skills", "fit", "red_flags", "author_flags", "payload"}
 
 
+def _ulower(value):
+    """Нижний регистр для любого языка: встроенный lower() в SQLite понимает только латиницу."""
+    return value.lower() if isinstance(value, str) else value
+
+
 class Database:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -164,12 +169,14 @@ class Database:
                 self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
                 self._memory_conn.row_factory = sqlite3.Row
                 self._memory_conn.execute("PRAGMA foreign_keys=ON")
+                self._memory_conn.create_function("ulower", 1, _ulower, deterministic=True)
             yield self._memory_conn
             self._memory_conn.commit()
             return
         c = sqlite3.connect(self.path, timeout=15)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA foreign_keys=ON")
+        c.create_function("ulower", 1, _ulower, deterministic=True)
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA busy_timeout=15000")
         try:

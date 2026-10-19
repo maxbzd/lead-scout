@@ -7,7 +7,15 @@ import re
 from .. import extract as ex
 from ..models import Extraction, Learned, OrderView, Score
 from ..profile import CAPACITY_MIN_BUDGET, Profile
-from ..scoring import below_minimum, draft_focus, finalize, hourly_to_day, matched_keys, order_keys, skill_phrase
+from ..scoring import (
+    below_minimum,
+    draft_focus,
+    finalize,
+    hourly_to_day,
+    matched_keys,
+    order_keys,
+    skill_phrase,
+)
 from ..taxonomy import label, labels, skill_ids
 from ..util import clip, fmt_money, squash
 
@@ -42,11 +50,13 @@ class RuleLLM:
         keys = order_keys(order)
         matched = matched_keys(order, profile)
         fit: list[dict] = []
-        s = 26.0
+        s = 28.0
 
         if keys:
             coverage = len(matched) / max(1, min(len(keys), 4))
-            s += 40 * min(1.0, coverage)
+            s += 42 * min(1.0, coverage)
+            if coverage >= 0.75 and len(matched) >= 2:
+                s += 4  # заказ почти целиком про ваши навыки
             if matched:
                 fit.append({"ok": True, "text": f"Навыки совпали: {skill_phrase(profile, order, 4)}"})
             else:
