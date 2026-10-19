@@ -123,7 +123,7 @@ function view() {
         <p class="lead-p">Сейчас бот работает по простым правилам: этого хватает, чтобы начать. С ключом Claude он понимает смысл сообщений, точнее оценивает заказы и пишет живые отклики.</p>
         <ol class="howto">
           <li>Откройте <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>, войдите и создайте ключ (Create Key).</li>
-          <li>Пополните баланс на несколько долларов. Бот тратит примерно 3–10 $ в месяц.</li>
+          <li>Пополните баланс на несколько долларов. Расход зависит от числа чатов: начните с 5–10 чатов, а точную сумму смотрите в «Аналитике».</li>
           <li>Вставьте ключ сюда. Он начинается с <b>sk-ant-</b>.</li>
         </ol>
         ${field('ai-key', 'Ключ Claude', { type: 'password', ph: 'sk-ant-…', auto: true })}
