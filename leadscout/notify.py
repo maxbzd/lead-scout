@@ -75,12 +75,14 @@ class Notifier:
         state = self.db.get_setting("notify_state", {})
         since = parse_iso(state.get("last_digest")) or ((now or now_utc()) - timedelta(hours=24))
         rows = self._digest_rows(iso(since))
-        state["last_digest"] = iso(now)
-        self.db.set_setting("notify_state", state)
         if not rows:
+            state["last_digest"] = iso(now)
+            self.db.set_setting("notify_state", state)
             return 0
         title = "Доброе утро! Вот что нашлось" if (local_now(load_profile(self.db).tz, now).hour < 12) else "Свежие заказы"
         await bot.send_digest(rows, f"{title}: {len(rows)}")
+        state["last_digest"] = iso(now)  # отмечаем только после отправки: при сбое сводка уйдёт в следующий раз
+        self.db.set_setting("notify_state", state)
         for r in rows:
             self.db.run("UPDATE orders SET alert_state='digested' WHERE id=? AND alert_state!='sent'", (r["id"],))
         return len(rows)
