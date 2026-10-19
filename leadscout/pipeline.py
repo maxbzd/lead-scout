@@ -21,6 +21,7 @@ from .util import iso, minutes_ago, now_utc
 log = logging.getLogger("leadscout.pipeline")
 
 DUP_THRESHOLD = 0.72
+SAME_AUTHOR_THRESHOLD = 0.45
 TONE_BY_NAME = {"short": "short", "warm": "warm", "formal": "formal"}
 
 
@@ -102,8 +103,10 @@ class Pipeline:
     def _attach_duplicate(self, raw: RawMessage, mid: int, text: str, chat: dict) -> bool:
         h = ex.content_hash(text)
         for o in store.recent_orders(self.db):
-            same = ex.content_hash(o["text"]) == h
-            if same or ex.similarity(o["text"], text) >= DUP_THRESHOLD:
+            sim = ex.similarity(o["text"], text)
+            same_author = bool(raw.author_id) and o.get("author_id") == raw.author_id
+            # один и тот же человек публикует заказ в нескольких чатах, часто чуть переписав текст
+            if ex.content_hash(o["text"]) == h or sim >= DUP_THRESHOLD or (same_author and sim >= SAME_AUTHOR_THRESHOLD):
                 store.add_source(self.db, o["id"], raw.chat_id, mid, store.chat_link(chat, raw.tg_msg_id), iso(raw.posted_at))
                 self.db.run("UPDATE orders SET dup_count=dup_count+1 WHERE id=?", (o["id"],))
                 store.set_message_status(self.db, mid, "dup")

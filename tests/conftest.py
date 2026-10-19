@@ -2,12 +2,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from leadscout import store
 from leadscout.config import Settings
 from leadscout.db import Database
 from leadscout.llm.rules import RuleLLM
 from leadscout.models import RawMessage
 from leadscout.pipeline import Pipeline
-from leadscout import store
 
 
 @pytest.fixture()

@@ -88,9 +88,9 @@ async def test_replies_count_as_bids(pipe, db, chat_id):
 async def test_feedback_changes_learning(pipe, db, chat_id):
     oid = await pipe.process(make_raw(chat_id, BOT))
     store.set_feedback(db, oid, "down", "budget")
-    l = learning.learned(db)
-    assert l.examples and not l.examples[0].liked
-    assert l.skill_weights["telegram"] < 0
+    learned = learning.learned(db)
+    assert learned.examples and not learned.examples[0].liked
+    assert learned.skill_weights["telegram"] < 0
     store.set_feedback(db, oid, None)
     assert learning.learned(db).examples == []
 
