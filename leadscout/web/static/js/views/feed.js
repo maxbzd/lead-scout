@@ -4,7 +4,7 @@ import { get, post } from '../api.js';
 import { S, loadFeed, loadStatus, replaceCard } from '../state.js';
 import { $, copyText, esc, html, I, openLink, paint, plural, raw, ring, safeUrl, toast, money } from '../ui.js';
 import { askWhy, giveFeedback, openOrder } from './detail.js';
-import { openConnect } from './connect.js';
+import { openConnect, setAiControl } from './connect.js';
 import { openChats } from './chats.js';
 
 const FILTERS = [
@@ -38,6 +38,11 @@ function paintBanners() {
   const st = S.status;
   const out = [];
   if (!S.online) out.push(html`<div class="banner warn">${I.alert}<span>Нет связи. Показываю то, что сохранилось на телефоне.</span></div>`);
+  const ai = st?.llm;
+  if (ai && ai.mode !== 'rules' && ai.control && !ai.control.active) {
+    const manual = ai.control.reason === 'manual';
+    out.push(html`<div class="banner"><span class="b-dot"></span><span><b>ИИ на паузе.</b> ${manual ? 'Вы поставили её вручную.' : `Накопилось ${ai.control.backlog} неразобранных заказов, разберите их.`} Оценивает бесплатно правилами.</span><button type="button" data-act="ai-resume">${manual ? 'Включить' : 'Всё равно включить'}</button></div>`);
+  }
   if (st?.demo) {
     out.push(html`<div class="banner"><span class="b-dot"></span><span><b>Демо.</b> Заказы тестовые.</span><button type="button" data-act="connect-tg">Подключить Telegram</button></div>`);
   } else if (st && st.telegram.state !== 'ready') {
@@ -248,6 +253,14 @@ export const feedActions = {
   dn: (el) => askWhy(+el.dataset.id),
   'connect-tg': () => openConnect('telegram'),
   'open-chats': () => openChats(),
+  'ai-resume': async () => {
+    try {
+      const c = S.status.llm.control;
+      await setAiControl(c.reason === 'manual' ? { paused: false } : { auto: false });
+      toast('ИИ снова работает');
+      paintAll();
+    } catch (e) { toast(e.message); }
+  },
   promote: async (el) => {
     el.disabled = true;
     try {

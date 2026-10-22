@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 
+from . import ai_control, learning, store
 from . import extract as ex
-from . import learning, store
 from .config import Settings
 from .db import Database, dumps
 from .llm.base import LLM
@@ -34,6 +35,8 @@ class Pipeline:
         self._lock = asyncio.Lock()
         self._rules = RuleLLM()
         self._inflight: set[tuple[int, int]] = set()
+        self._ai_checked = 0.0
+        self._ai_state = True
 
     def set_llm(self, llm: LLM) -> None:
         self.llm = llm
@@ -91,13 +94,13 @@ class Pipeline:
 
         hint = rule_extract(text, raw.author_username, raw.author_flags)
         try:
-            ext = await self.llm.extract(text, hint)
+            ext = await (self.llm if self.ai_on() else self._rules).extract(text, hint)
         except Exception:  # любая неожиданность: берём то, что поняли правилами
             log.exception("extract failed, using rules")
             ext = hint
         if not ext.is_order:
             # правила сочли это заказом, а нейросеть нет (или заказ без явных слов): в режиме «ничего не пропускать» показываем с пометкой
-            if force or (self._recall() and (hint.is_order or (self.llm.name == "rules" and lenient))):
+            if force or (self._recall() and (hint.is_order or (not self.ai_on() and lenient))):
                 ext.is_order = True
                 ext.flags = [*ext.flags, ex.Flag("doubt", "Не уверен, что это заказ: похоже по формулировке", "low")]
             else:
@@ -117,6 +120,19 @@ class Pipeline:
         return order_id
 
     # ------------------------------------------------------- проверки ----
+    def ai_on(self) -> bool:
+        """ИИ работает в фоне, если он подключён, не на паузе и ленту не завалило неразобранным."""
+        if self.llm.name == "rules":
+            return False
+        now = time.monotonic()
+        if now - self._ai_checked > 15:  # состояние пересчитываем не чаще раза в 15 секунд
+            self._ai_state = ai_control.state(self.db)["active"]
+            self._ai_checked = now
+        return self._ai_state
+
+    def reset_ai_state(self) -> None:
+        self._ai_checked = 0.0
+
     def _recall(self) -> bool:
         return load_profile(self.db).recall
 
@@ -124,7 +140,7 @@ class Pipeline:
         short = 20 if self._recall() else 40
         if len(ex.squash(text)) < short:
             return False
-        if self.llm.name != "rules":
+        if self.ai_on():
             pos, seeker, ads = ex.order_signals(text)
             return pos >= 1 and not (ads >= 2 and pos < 3) and not (seeker >= 2 and pos < 3)
         return ex.looks_like_order(text)
@@ -192,6 +208,8 @@ class Pipeline:
         if probe.verdict in {"scam", "skip"}:
             return probe
         learned = learning.learned(self.db)
+        if not self.ai_on():
+            return await self._rules.score(view, profile, learned)  # пауза ИИ: оцениваем бесплатно, правилами
         if getattr(self.llm, "deferred", False):
             return await self._rules.score(view, profile, learned)  # ИИ с лимитами уточнит позже, в фоне
         try:
@@ -219,7 +237,7 @@ class Pipeline:
         return order_id
 
     async def _pre_draft(self, order_id: int, view: OrderView, profile: Profile, score: Score) -> None:
-        if score.verdict != "match" or getattr(self.llm, "deferred", False):
+        if score.verdict != "match" or getattr(self.llm, "deferred", False) or (self.llm.name != "rules" and not self.ai_on()):
             return  # у бесплатного ИИ запросы на счету: черновик напишем, когда вы откроете заказ
         try:
             await self.make_draft(order_id, profile.tone, 0, view=view, profile=profile)
@@ -299,7 +317,7 @@ class Pipeline:
 
     async def upgrade_with_ai(self, limit: int = 5, hours: int = 72) -> int:
         """Для сервисов с лимитами: заказы сначала оцениваются правилами, а ИИ уточняет их в фоне, самые свежие первыми."""
-        if self.llm.name == "rules":
+        if not self.ai_on():
             return 0
         profile = load_profile(self.db)
         rows = self.db.all(

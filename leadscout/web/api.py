@@ -507,6 +507,18 @@ def disconnect_claude(request: Request) -> dict:
     return {"llm": rt.llm_status()}
 
 
+class AiControlIn(BaseModel):
+    paused: bool | None = None
+    auto: bool | None = None
+    limit: int | None = Field(default=None, ge=5, le=500)
+
+
+@router.put("/ai/control")
+def ai_control_put(body: AiControlIn, request: Request) -> dict:
+    rt = rt_of(request)
+    return {"llm": rt.set_ai_control(body.model_dump(exclude_none=True))}
+
+
 class AiIn(BaseModel):
     provider: str = Field(max_length=20)
     key: str = Field(default="", max_length=300)
@@ -518,6 +530,12 @@ class AiIn(BaseModel):
 def ai_providers() -> dict:
     return {"items": [{"id": k, **{f: v[f] for f in ("label", "base_url", "model", "needs_key", "key_url", "note", "rpd")}}
                       for k, v in PROVIDERS.items()]}
+
+
+@router.post("/connect/ai/models")
+async def ai_models(body: AiIn, request: Request) -> dict:
+    rt = rt_of(request)
+    return {"items": await rt.ai_models(body.provider, body.key, body.base_url)}
 
 
 @router.post("/connect/ai")

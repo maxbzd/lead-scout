@@ -30,7 +30,7 @@ log = logging.getLogger("leadscout.llm")
 PROVIDERS: dict[str, dict[str, Any]] = {
     "gemini": {
         "label": "Google Gemini (бесплатно)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": "gemini-2.5-flash-lite", "rpm": 12, "rpd": 900, "needs_key": True,
+        "model": "gemini-3.5-flash-lite", "rpm": 12, "rpd": 900, "needs_key": True,
         "key_url": "https://aistudio.google.com/apikey",
         "note": "Бесплатный ключ берётся в Google AI Studio. Сервер должен стоять в стране, где Gemini доступен.",
     },
@@ -229,6 +229,24 @@ class OpenAICompatLLM(ClaudeLLM):
         text = await self._call(self.model, "Отвечай коротко.", "Ответь одним словом: ok", schema=None, wants_json=False, max_tokens=20)
         if not text.strip():
             raise LLMUnavailable("модель не ответила")
+
+    async def list_models(self) -> list[str]:
+        """Какие модели доступны по этому ключу: помогает выбрать актуальное имя, пока оно не устарело."""
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            resp = await self.client.get(f"{self.base_url}/models", headers=headers)
+        except httpx.HTTPError as e:
+            raise LLMUnavailable("Нет связи с сервисом ИИ") from e
+        if resp.status_code in (401, 403):
+            raise LLMUnavailable("Ключ ИИ не подошёл")
+        if resp.status_code >= 400:
+            raise LLMUnavailable(f"Сервис ИИ ответил ошибкой {resp.status_code}")
+        try:
+            items = resp.json().get("data") or []
+        except ValueError:
+            return []
+        ids = [str(i.get("id", "")).removeprefix("models/") for i in items if isinstance(i, dict)]
+        return sorted({i for i in ids if i})[:80]
 
     async def aclose(self) -> None:
         await self.client.aclose()
