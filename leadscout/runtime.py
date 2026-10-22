@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
-from . import learning, store
+from . import ai_control, learning, store
 from .bot import BotApi, BotError, BotService
 from .config import Settings
 from .db import Database
@@ -102,7 +102,8 @@ class Runtime:
         mode = "rules" if self.llm.name == "rules" else ("claude" if self.llm.name == "claude" else "ai")
         err = getattr(self.llm, "last_error", None)
         usage = self.db.get_setting("usage:" + now_utc().strftime("%Y-%m"))
-        out = {"mode": mode, "error": err, "usage": usage, "source": "none", "provider": None}
+        out = {"mode": mode, "error": err, "usage": usage, "source": "none", "provider": None,
+               "control": ai_control.state(self.db) if mode != "rules" else None}
         if mode == "claude":
             out["source"] = self.secrets.source("anthropic_key")
         elif mode == "ai":
@@ -135,6 +136,22 @@ class Runtime:
         else:
             self.secrets.delete("ai_key")
         self.build_llm()
+
+    async def ai_models(self, provider: str, key: str, base_url: str = "") -> list[str]:
+        preset = PROVIDERS.get(provider)
+        if preset is None:
+            raise LLMUnavailable("Неизвестный сервис ИИ")
+        probe = OpenAICompatLLM((base_url or preset["base_url"]).strip(), key.strip(), preset["model"], provider=provider)
+        try:
+            return await probe.list_models()
+        finally:
+            await probe.aclose()
+
+    def set_ai_control(self, patch: dict) -> dict:
+        ai_control.save(self.db, patch)
+        self.pipeline.reset_ai_state()
+        self.bus.publish({"type": "status"})
+        return self.llm_status()
 
     def disconnect_ai(self) -> None:
         self.db.del_setting("ai_config")

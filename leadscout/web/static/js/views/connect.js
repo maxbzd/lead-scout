@@ -1,8 +1,8 @@
 // Подключения: Telegram-аккаунт, бот, ключ Claude. Каждое по шагам, простыми словами.
 
-import { del, get, post } from '../api.js';
+import { del, get, post, put } from '../api.js';
 import { S, loadStatus } from '../state.js';
-import { $, closeSheet, html, I, openSheet, raw, setSheet, sheetHead, toast } from '../ui.js';
+import { $, closeSheet, esc, html, I, openSheet, raw, setSheet, sheetHead, toast } from '../ui.js';
 import { openChats } from './chats.js';
 import { paintAll, refreshFeed } from './feed.js';
 import { renderProfile } from './profile.js';
@@ -14,7 +14,7 @@ const stopPoll = () => { clearInterval(pollTimer); pollTimer = null; };
 
 export async function openConnect(kind) {
   await loadStatus().catch(() => {});
-  C = { kind, step: firstStep(kind), error: '', busy: false, phone: '', presets: null, provider: '' };
+  C = { kind, step: firstStep(kind), error: '', busy: false, phone: '', presets: null, provider: '', models: null };
   if (C.step === 'ai-pick') await loadPresets();
   openSheet(view(), { onClose: () => { stopPoll(); C = null; renderProfileSafe(); } });
   if (C.step === 'pair') startPoll();
@@ -38,6 +38,12 @@ function firstStep(kind) {
 
 async function loadPresets() {
   try { C.presets = (await get('/connect/ai/providers')).items; } catch (e) { C.presets = []; C.error = e.message; }
+}
+
+export async function setAiControl(patch) {
+  const r = await put('/ai/control', patch);
+  S.status.llm = r.llm;
+  return r.llm;
 }
 
 const preset = () => C.presets?.find((p) => p.id === C.provider);
@@ -146,6 +152,7 @@ function view() {
         ${p.needs_key ? field('ai-free-key', 'Ключ', { type: 'password', ph: 'Вставьте ключ', auto: true }) : ''}
         ${p.id === 'custom' || p.id === 'ollama' ? field('ai-free-url', 'Адрес сервиса', { type: 'url', ph: 'https://…/v1', value: p.base_url }) : ''}
         ${field('ai-free-model', 'Модель', { ph: p.model || 'название модели', value: p.model })}
+        ${C.models?.length ? html`<div class="chips wrap">${C.models.slice(0, 24).map((m) => raw(`<button class="chip" type="button" data-act="ai-model-pick" data-v="${esc(m)}">${esc(m)}</button>`))}</div>` : html`<button class="linkish" type="button" data-act="ai-models">Показать доступные модели</button>`}
         <p class="mono note-sm">Названия моделей у сервисов меняются. Если проверка пишет «модель не найдена», возьмите актуальное имя на странице сервиса.</p>
         ${p.rpd < 100000 ? html`<p class="capnote">Дневной лимит этого тарифа примерно ${p.rpd} запросов. Когда он кончится, бот до утра работает по правилам.</p>` : ''}
         ${p.id === 'gemini' ? html`<p class="capnote">Важно: на бесплатном тарифе Google может использовать присланные тексты для улучшения своих продуктов. Читайте условия сервиса, в чатах бывают чужие данные.</p>` : ''}
@@ -170,11 +177,23 @@ function view() {
       return html`${sheetHead('ИИ-режим включён')}
         <div class="okbox">${I.check}<div><b>${free ? `Подключено: ${l.model}` : 'Claude подключён'}</b><p>${l.error ? html`<span class="warn-t">Сейчас есть проблема: ${l.error}. Пока работаю по простым правилам.</span>` : 'Бот понимает смысл заказов и пишет отклики.'}</p>
           ${free ? html`<p>Сегодня запросов: ${l.used_today} из ${l.limit_today}. Когда лимит кончится, бот до утра работает по правилам.</p>` : u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
+        ${controlBlock(l.control)}
         <div class="btnrow">${l.source === 'app' ? html`<button class="btn danger" type="button" data-act="${free ? 'ai-free-off' : 'ai-off'}">Отключить</button>` : ''}<button class="btn pri" type="button" data-act="close">Готово</button></div>`;
     }
     default:
       return '';
   }
+}
+
+function controlBlock(c) {
+  if (!c) return '';
+  const state = c.reason === 'manual' ? 'ИИ на паузе: вы поставили её вручную.' : c.reason === 'backlog' ? `ИИ на паузе сам: в ленте уже ${c.backlog} неразобранных заказов.` : `Неразобранных заказов в ленте: ${c.backlog}.`;
+  return html`<div class="sec"><span class="mono">Пауза, чтобы не тратить запросы</span>
+    <p class="capnote" style="margin-top:8px">${state} На паузе бот читает чаты и оценивает заказы бесплатными правилами. Черновики по вашему нажатию пишутся как обычно.</p>
+    <div class="sw-row"><div><div class="t">Пауза ИИ</div><div class="s">Выключить ИИ, пока вы не включите обратно</div></div><button class="sw" role="switch" aria-checked="${!!c.paused}" data-act="ai-pause" aria-label="Пауза ИИ"></button></div>
+    <div class="sw-row"><div><div class="t">Пауза, когда накопилось много</div><div class="s">Включится сама и выключится, когда вы разберёте заказы</div></div><button class="sw" role="switch" aria-checked="${!!c.auto}" data-act="ai-auto" aria-label="Автопауза"></button></div>
+    ${c.auto ? html`<div class="mono" style="margin-top:6px">неразобранных, при которых ставить на паузу</div><div class="chips wrap">${[20, 40, 80, 150].map((n) => raw(`<button class="chip${c.limit === n ? ' on' : ''}" type="button" data-act="ai-limit" data-v="${n}">${n}</button>`))}</div>` : ''}
+  </div>`;
 }
 
 function rerender(step) {
@@ -274,6 +293,17 @@ export const connectActions = {
     toast('Claude подключён');
     rerender('ai-done');
   }),
+  'ai-pause': () => run(async () => { await setAiControl({ paused: !S.status.llm.control.paused }); rerender('ai-done'); }),
+  'ai-auto': () => run(async () => { await setAiControl({ auto: !S.status.llm.control.auto }); rerender('ai-done'); }),
+  'ai-limit': (el) => run(async () => { await setAiControl({ limit: +el.dataset.v }); rerender('ai-done'); }),
+  'ai-models': () => run(async () => {
+    const r = await post('/connect/ai/models', { provider: C.provider, key: val('ai-free-key'), base_url: val('ai-free-url') });
+    C.models = r.items;
+    if (!r.items.length) throw new Error('Сервис не вернул список моделей');
+    rerender();
+    toast(`Доступно моделей: ${r.items.length}. Выберите в поле «Модель».`);
+  }),
+  'ai-model-pick': (el) => { document.getElementById('ai-free-model').value = el.dataset.v; },
   'ai-choose': async (el) => {
     C.error = '';
     if (el.dataset.v === 'claude') return rerender('ai-key');
