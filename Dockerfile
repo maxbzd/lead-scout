@@ -2,9 +2,11 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 LS_DATA_DIR=/data LS_HOST=0.0.0.0 LS_PORT=8000
 WORKDIR /app
-COPY pyproject.toml ./
+# Зависимости ставятся строго по списку с контрольными суммами: подменённый или внезапно обновлённый пакет не пройдёт
+COPY requirements.lock pyproject.toml ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 COPY leadscout ./leadscout
-RUN pip install .
+RUN pip install --no-cache-dir --no-deps .
 
 RUN useradd --create-home --uid 1000 scout && mkdir /data && chown scout /data
 USER scout
