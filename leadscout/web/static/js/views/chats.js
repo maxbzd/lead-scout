@@ -2,7 +2,7 @@
 
 import { del, get, patch, post } from '../api.js';
 import { S, loadChats, loadStatus } from '../state.js';
-import { $, ago, esc, html, I, openSheet, plural, setSheet, sheetHead, toast } from '../ui.js';
+import { $, ago, html, I, openSheet, plural, setSheet, sheetHead, toast } from '../ui.js';
 import { openConnect } from './connect.js';
 import { paintAll } from './feed.js';
 import { renderProfile } from './profile.js';
@@ -27,7 +27,7 @@ function chatRow(c) {
       <div class="row-act">${CH.confirmDel === c.id
         ? html`<button type="button" class="linkish bad-t" data-act="chat-del-yes" data-id="${c.id}">Точно удалить вместе с заказами</button> <button type="button" class="linkish" data-act="chat-del-no">Нет</button>`
         : html`<button type="button" class="linkish" data-act="chat-del" data-id="${c.id}">Удалить</button>`}</div></div>
-    <button class="sw" role="switch" aria-checked="${!!c.enabled}" data-act="chat-toggle" data-id="${c.id}" aria-label="Читать ${esc(c.title)}"></button>
+    <button class="sw" role="switch" aria-checked="${!!c.enabled}" data-act="chat-toggle" data-id="${c.id}" aria-label="Читать ${c.title}"></button>
   </div>`;
 }
 
@@ -87,12 +87,15 @@ export const chatActions = {
     CH.error = '';
     const btn = document.querySelector('[data-act="chat-add"]');
     btn.disabled = true;
+    let ok = false;
     try {
       const r = await post('/chats', { link });
       S.chats.items = r.items;
       toast('Чат добавлен. Начинаю читать.');
+      ok = true;
     } catch (e) { CH.error = e.message; }
     redraw();
+    if (!ok) { const inp = $('#chat-link'); if (inp) inp.value = link; } // ошибка не должна стирать введённое
   },
   'chat-dialogs': async () => {
     CH.loading = true;

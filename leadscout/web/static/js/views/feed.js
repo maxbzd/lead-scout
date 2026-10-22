@@ -146,10 +146,17 @@ function discardedHtml(m) {
   </article>`;
 }
 
+let feedError = '';
+
 export function paintList(anim = false) {
   const list = $('#list');
   if (!list) return;
   const items = S.feed?.items || [];
+  if (!S.feed && feedError) {
+    paint(list, html`<div class="empty"><div class="t">Не получилось загрузить</div>${feedError}<br><button class="btn" type="button" data-act="retry-feed" style="margin-top:16px">Повторить</button></div>`);
+    $('#shown').textContent = '';
+    return;
+  }
   list.classList.toggle('anim', anim);
   $('#shown').textContent = S.feed ? `показано ${items.length}` : '';
   const draw = S.filter === 'discarded' ? (o) => discardedHtml(o) : cardHtml;
@@ -159,7 +166,10 @@ export function paintList(anim = false) {
 export async function refreshFeed({ anim = false } = {}) {
   try {
     await loadFeed();
+    feedError = '';
   } catch (e) {
+    S.feed = null; // иначе под новым фильтром остались бы карточки от старого
+    feedError = e.message;
     toast(e.message);
   }
   paintAll(anim);
@@ -203,7 +213,15 @@ export function updateScanPill() {
 // -------------------------------------------------------------- действия ----
 const byId = (id) => S.feed?.items.find((o) => o.id === +id);
 
+const offering = new Set();
+
 async function quickOffer(id) {
+  if (offering.has(id)) return; // двойной тап не должен отправлять два отклика
+  offering.add(id);
+  try { await quickOfferNow(id); } finally { offering.delete(id); }
+}
+
+async function quickOfferNow(id) {
   const o = byId(id);
   if (!o) return;
   if (!o.draft || !o.contact_url) return openOrder(id, { focus: 'draft' });
@@ -231,6 +249,7 @@ export const feedActions = {
   open: (el) => openOrder(+el.dataset.id),
   'quick-offer': (el) => quickOffer(+el.dataset.id),
   scan: () => runScan(),
+  'retry-feed': () => refreshFeed({ anim: true }),
   bm: async (el) => {
     const id = +el.dataset.id;
     const o = byId(id);
