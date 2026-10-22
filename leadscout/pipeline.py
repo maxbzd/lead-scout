@@ -27,6 +27,14 @@ SAME_CHAT_THRESHOLD = 0.85  # в одном чате похожий текст �
 TONE_BY_NAME = {"short": "short", "warm": "warm", "formal": "formal"}
 
 
+def _same_budget(order: dict, new: ex.Budget) -> bool:
+    """Бюджеты совместимы, если хотя бы один неизвестен или отличаются не больше чем на 15%."""
+    old = order.get("budget_max")
+    if not old or not new.max or (order.get("currency") or "RUB") != new.currency:
+        return True
+    return abs(old - new.max) <= 0.15 * max(old, new.max)
+
+
 class Pipeline:
     def __init__(self, db: Database, llm: LLM, settings: Settings):
         self.db = db
@@ -37,6 +45,8 @@ class Pipeline:
         self._inflight: set[tuple[int, int]] = set()
         self._ai_checked = 0.0
         self._ai_state = True
+        self._pending: dict[str, asyncio.Event] = {}  # тексты, которые разбираются прямо сейчас
+        self._ai_fail: dict[int, tuple[int, float]] = {}  # заказ -> (число неудач ИИ, когда пробовать снова)
 
     def set_llm(self, llm: LLM) -> None:
         self.llm = llm
@@ -59,16 +69,17 @@ class Pipeline:
         finally:
             self._inflight.discard(key)
 
-    async def retry_stuck(self, limit: int = 40) -> int:
+    async def retry_stuck(self, limit: int = 40) -> list[int]:
         """Сообщения, которые записались, но не успели обработаться (сбой или остановка): пробуем ещё раз."""
-        n = 0
+        ids: list[int] = []
         for raw in store.unprocessed_messages(self.db, limit):
             try:
-                if await self.process(raw):
-                    n += 1
+                oid = await self.process(raw)
+                if oid:
+                    ids.append(oid)
             except Exception:
                 log.exception("retry failed")
-        return n
+        return ids
 
     async def promote(self, message_id: int) -> int | None:
         """«Это заказ»: берём отброшенное сообщение и обрабатываем его без отбора."""
@@ -82,7 +93,7 @@ class Pipeline:
 
     async def _process(self, raw: RawMessage, text: str, mid: int, force: bool = False) -> int | None:
         chat = self.db.one("SELECT * FROM chats WHERE id=?", (raw.chat_id,)) or {}
-        if raw.reply_to and self._handle_reply(raw, mid):
+        if raw.reply_to and self._handle_reply(raw, mid, text):
             return None
         strict = self._is_candidate(text)
         lenient = force or (not strict and self._recall() and ex.maybe_order(text))
@@ -91,16 +102,35 @@ class Pipeline:
             return None
         if self._attach_duplicate(raw, mid, text, chat):
             return None
-
-        hint = rule_extract(text, raw.author_username, raw.author_flags)
+        # один и тот же текст из нескольких чатов разбираем один раз: остальные ждут и склеиваются
+        h = ex.content_hash(text)
+        waiter = self._pending.get(h)
+        if waiter is not None:
+            try:
+                await asyncio.wait_for(waiter.wait(), 120)
+            except TimeoutError:
+                pass
+            if self._attach_duplicate(raw, mid, text, chat):
+                return None
+        done = self._pending.setdefault(h, asyncio.Event())
         try:
-            ext = await (self.llm if self.ai_on() else self._rules).extract(text, hint)
+            return await self._analyze(raw, text, mid, chat, force, strict or lenient)
+        finally:
+            done.set()
+            self._pending.pop(h, None)
+
+    async def _analyze(self, raw: RawMessage, text: str, mid: int, chat: dict, force: bool, lenient: bool) -> int | None:
+        hint = rule_extract(text, raw.author_username, raw.author_flags)
+        obvious_scam = any(f.level == "high" for f in hint.flags)  # очевидный обман не стоит запроса к ИИ
+        try:
+            ext = await (self.llm if self.ai_on() and not obvious_scam else self._rules).extract(text, hint)
         except Exception:  # любая неожиданность: берём то, что поняли правилами
             log.exception("extract failed, using rules")
             ext = hint
+        judged = ext is not hint  # ИИ действительно разобрал сообщение (а не вернул подсказку правил)
         if not ext.is_order:
             # правила сочли это заказом, а нейросеть нет (или заказ без явных слов): в режиме «ничего не пропускать» показываем с пометкой
-            if force or (self._recall() and (hint.is_order or (not self.ai_on() and lenient))):
+            if force or (self._recall() and (hint.is_order or (not judged and lenient))):
                 ext.is_order = True
                 ext.flags = [*ext.flags, ex.Flag("doubt", "Не уверен, что это заказ: похоже по формулировке", "low")]
             else:
@@ -145,7 +175,7 @@ class Pipeline:
             return pos >= 1 and not (ads >= 2 and pos < 3) and not (seeker >= 2 and pos < 3)
         return ex.looks_like_order(text)
 
-    def _handle_reply(self, raw: RawMessage, mid: int) -> bool:
+    def _handle_reply(self, raw: RawMessage, mid: int, text: str = "") -> bool:
         """Ответ на чужое объявление считаем откликом конкурента."""
         parent = self.db.one("SELECT id, author_id FROM messages WHERE chat_id=? AND tg_msg_id=?", (raw.chat_id, raw.reply_to))
         if not parent:
@@ -153,6 +183,8 @@ class Pipeline:
         order = store.order_by_message(self.db, parent["id"])
         if not order:
             return False
+        if text and ex.looks_like_order(text) and (ex.parse_budget(text).known or ex.parse_contact(text).type in {"telegram", "email"}):
+            return False  # это не отклик исполнителя, а новое объявление в ответ на чужое: разбираем как заказ
         store.set_message_status(self.db, mid, "reply")
         if raw.author_id and parent.get("author_id") and raw.author_id == parent["author_id"]:
             return True  # заказчик уточняет, это не отклик
@@ -172,7 +204,10 @@ class Pipeline:
 
     def _attach_duplicate(self, raw: RawMessage, mid: int, text: str, chat: dict) -> bool:
         h = ex.content_hash(text)
+        nb = ex.parse_budget(text)
         for o in store.recent_orders(self.db):
+            if not _same_budget(o, nb):
+                continue  # другая цена, значит другая задача, даже если текст похож
             sim = ex.similarity(o["text"], text)
             same_author = bool(raw.author_id) and o.get("author_id") == raw.author_id
             # один и тот же человек публикует заказ в нескольких чатах, часто чуть переписав текст
@@ -296,13 +331,16 @@ class Pipeline:
             if use_llm or row["scored_by"] in (None, "rules"):
                 engine: LLM = self.llm if use_llm else self._rules
                 score = await engine.score(view, profile, learned)
+                if score.scored_by == "rules" and row["scored_by"] not in (None, "rules"):
+                    continue  # ИИ не ответил: оставляем прежнюю оценку ИИ, а не заменяем её правилами
             else:
                 # оценка от ИИ остаётся; меняем её, только если заказ теперь нарушает жёсткие правила
                 old = Score(score=row["score"], verdict=row["verdict"] if row["verdict"] in {"match", "maybe"} else "maybe",
                             why=row["why"] or "", fit=list(row["fit"] or []), flags=[], scored_by=row["scored_by"])
                 score = finalize(old, view, profile, view.flags)
-                if score.verdict not in {"skip", "scam"} or row["verdict"] in {"skip", "scam"}:
-                    continue
+                was_out, now_out = row["verdict"] in {"skip", "scam"}, score.verdict in {"skip", "scam"}
+                if was_out == now_out:
+                    continue  # вердикт ИИ меняем, только если заказ ушёл в отсев или вернулся из него
             self._apply_score(row["id"], view, profile, score)
             n += 1
         return n
@@ -323,15 +361,29 @@ class Pipeline:
         rows = self.db.all(
             store.ORDER_SELECT + " WHERE o.scored_by='rules' AND o.verdict IN ('match','maybe') AND o.feedback IS NULL "
             "AND o.stage IS NULL AND o.state!='hidden' AND o.created_at>=? ORDER BY o.id DESC LIMIT ?",
-            (iso(now_utc() - timedelta(hours=hours)), limit),
+            (iso(now_utc() - timedelta(hours=hours)), limit * 4),
         )
+        now = time.monotonic()
+        rows = [r for r in rows if self._ai_fail.get(r["id"], (0, 0.0))[1] <= now][:limit]  # неудачные ждут своей очереди
         learned = learning.learned(self.db) if rows else None
-        done = 0
+        done = fails = 0
         for row in rows:
             view = self.view_of(row)
-            score = await self.llm.score(view, profile, learned)
-            if score.scored_by == "rules":
-                break  # ИИ сейчас недоступен или лимит кончился: попробуем позже
+            try:
+                score = await self.llm.score(view, profile, learned)
+            except Exception:
+                log.exception("ai upgrade failed")
+                score = None
+            if score is None or score.scored_by == "rules":
+                n = self._ai_fail.get(row["id"], (0, 0.0))[0] + 1  # ИИ не ответил по этому заказу: пауза всё дольше
+                self._ai_fail[row["id"]] = (n, now + min(3600.0, 120.0 * 2 ** n))
+                fails += 1
+                if fails >= 2:
+                    break  # ИИ недоступен или лимит кончился: попробуем позже
+                continue
+            self._ai_fail.pop(row["id"], None)
             self._apply_score(row["id"], view, profile, score)
             done += 1
+        if len(self._ai_fail) > 500:
+            self._ai_fail.clear()
         return done

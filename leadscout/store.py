@@ -179,7 +179,7 @@ def order_by_message(db: Database, message_id: int) -> dict | None:
 def recent_orders(db: Database, days: int = 14) -> list[dict]:
     since = iso(now_utc() - timedelta(days=days))
     return db.all(
-        "SELECT o.id, o.title, o.dup_count, m.text, m.author_id, m.chat_id FROM orders o JOIN messages m ON m.id=o.message_id "
+        "SELECT o.id, o.title, o.dup_count, o.budget_max, o.currency, m.text, m.author_id, m.chat_id FROM orders o JOIN messages m ON m.id=o.message_id "
         "WHERE o.created_at>=? ORDER BY o.id DESC LIMIT 800",
         (since,),
     )
@@ -316,15 +316,12 @@ def set_bids(db: Database, order_id: int, n: int) -> None:
 def purge_old(db: Database, days: int = 60) -> int:
     """Старый мусор убираем: заказы, с которыми вы ничего не делали, и их сообщения."""
     cutoff = iso(now_utc() - timedelta(days=days))
-    ids = db.all(
-        "SELECT o.message_id AS mid FROM orders o WHERE o.posted_at<? AND o.feedback IS NULL AND o.stage IS NULL "
-        "AND o.state NOT IN ('saved') AND o.offered_at IS NULL",
-        (cutoff,),
-    )
-    n = 0
-    for r in ids:
-        db.run("DELETE FROM messages WHERE id=?", (r["mid"],))
-        n += 1
+    n = db.scalar(
+        "SELECT COUNT(*) FROM orders o WHERE o.posted_at<? AND o.feedback IS NULL AND o.stage IS NULL "
+        "AND o.state NOT IN ('saved') AND o.offered_at IS NULL", (cutoff,), 0)
+    db.run(  # одним запросом: построчное удаление держало бы работу приложения секундами
+        "DELETE FROM messages WHERE id IN (SELECT o.message_id FROM orders o WHERE o.posted_at<? AND o.feedback IS NULL "
+        "AND o.stage IS NULL AND o.state NOT IN ('saved') AND o.offered_at IS NULL)", (cutoff,))
     db.run(
         "DELETE FROM messages WHERE posted_at<? AND status IN ('noise','reply','new','dup') "
         "AND id NOT IN (SELECT message_id FROM orders)",

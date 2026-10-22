@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import secrets as pysecrets
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -27,6 +28,9 @@ log = logging.getLogger("leadscout.bot")
 API = "https://api.telegram.org"
 
 
+_TG_URL = re.compile(r"https://t\.me/[A-Za-z][A-Za-z0-9_]{3,63}")
+
+
 class BotError(Exception):
     def __init__(self, message: str, code: int | None = None):
         super().__init__(message)
@@ -40,14 +44,20 @@ class BotApi:
 
     async def call(self, method: str, **params: Any) -> Any:
         params = {k: v for k, v in params.items() if v is not None}
-        try:
-            r = await self.client.post(f"{API}/bot{self.token}/{method}", json=params)
-        except httpx.HTTPError as e:
-            raise BotError(f"Нет связи с Telegram: {type(e).__name__}") from e
-        try:
-            data = r.json()
-        except ValueError as e:
-            raise BotError(f"Telegram ответил не так, как ждали ({r.status_code})", r.status_code) from e
+        for attempt in range(2):
+            try:
+                r = await self.client.post(f"{API}/bot{self.token}/{method}", json=params)
+            except httpx.HTTPError as e:
+                raise BotError(f"Нет связи с Telegram: {type(e).__name__}") from e
+            try:
+                data = r.json()
+            except ValueError as e:
+                raise BotError(f"Telegram ответил не так, как ждали ({r.status_code})", r.status_code) from e
+            if r.status_code == 429 and attempt == 0 and method != "getUpdates":
+                wait = float((data.get("parameters") or {}).get("retry_after", 2))
+                await asyncio.sleep(min(30.0, max(0.5, wait)))  # Telegram просит подождать: ждём и пробуем ещё раз
+                continue
+            break
         if not data.get("ok"):
             desc = data.get("description", "ошибка")
             if r.status_code == 401:
@@ -88,6 +98,7 @@ class BotService:
         self.pipeline = pipeline
         self.owner_id = owner_id or self.db.get_setting("owner_id") or None
         self.scan = scan
+        self._tasks: set[asyncio.Task] = set()
         self.add_chat = add_chat
         self.username: str | None = None
         self._offset = 0
@@ -167,7 +178,7 @@ class BotService:
         url = self.app_url(oid)
         if url:
             tail.append(btn("Открыть в приложении", url=url))
-        if row.get("contact_url", "").startswith("https://"):
+        if _TG_URL.fullmatch(row.get("contact_url") or ""):  # Telegram отвергает кнопку с любой другой ссылкой, и пропадает вся карточка
             tail.append(btn("Написать", url=row["contact_url"]))
         if tail:
             rows.append(tail)
@@ -177,13 +188,30 @@ class BotService:
     async def send_card(self, row: dict, header: str | None = None) -> None:
         if not self.owner_id:
             return
-        await self.api.call("sendMessage", chat_id=self.owner_id, text=self.card_text(row, header), parse_mode="HTML",
-                            reply_markup=self.card_keyboard(row), link_preview_options={"is_disabled": True})
+        text = self.card_text(row, header)[:4000]
+        try:
+            await self.api.call("sendMessage", chat_id=self.owner_id, text=text, parse_mode="HTML",
+                                reply_markup=self.card_keyboard(row), link_preview_options={"is_disabled": True})
+        except BotError as e:
+            if e.code != 400:
+                raise
+            # чаще всего виноваты кнопки со ссылками: отправляем карточку с простыми кнопками
+            oid = row["id"]
+            plain = kb([btn("✉️ Предложить", f"offer:{oid}"), btn("👍", f"fb:up:{oid}"), btn("👎", f"fb:dn:{oid}")])
+            await self.api.call("sendMessage", chat_id=self.owner_id, text=text, parse_mode="HTML", reply_markup=plain,
+                                link_preview_options={"is_disabled": True})
+
+    async def _ack(self, cb_id: str, text: str | None = None) -> None:
+        """Подтверждение нажатия. Устаревшее нажатие (Telegram отвечает 400) не должно отменять само действие."""
+        try:
+            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text=text)
+        except BotError:
+            log.debug("callback ack failed", exc_info=True)
 
     async def send_text(self, text: str, markup: dict | None = None) -> None:
         if not self.owner_id:
             return
-        await self.api.call("sendMessage", chat_id=self.owner_id, text=text, parse_mode="HTML", reply_markup=markup,
+        await self.api.call("sendMessage", chat_id=self.owner_id, text=text[:4000], parse_mode="HTML", reply_markup=markup,
                             link_preview_options={"is_disabled": True})
 
     async def send_digest(self, rows: list[dict], title: str, note: str = "") -> None:
@@ -302,8 +330,8 @@ class BotService:
 
     async def cmd_digest(self) -> None:
         rows = self.db.all(
-            store.ORDER_SELECT + " WHERE o.verdict='match' AND o.state='new' AND o.feedback IS NULL AND o.offered_at IS NULL "
-            "ORDER BY o.score DESC, o.posted_at DESC LIMIT 6")
+            store.ORDER_SELECT + " WHERE o.verdict IN ('match','maybe') AND o.state='new' AND o.feedback IS NULL AND o.offered_at IS NULL "
+            "AND c.is_demo=0 ORDER BY (o.verdict='match') DESC, o.score DESC, o.posted_at DESC LIMIT 10")
         if not rows:
             await self.send_text("Свежих подходящих заказов сейчас нет. Как только появятся, напишу.")
             return
@@ -331,10 +359,12 @@ class BotService:
             await self.send_text("Чатов пока нет. Добавьте ссылкой: /add https://t.me/имя_чата")
             return
         lines = ["<b>Читаю чаты</b>"]
-        for c in chats:
+        for c in chats[:40]:
             mark = "✅" if c["enabled"] else "⏸"
-            err = f" — {esc(c['last_error'])}" if c.get("last_error") else ""
+            err = f" — {esc(clip(c['last_error'], 80))}" if c.get("last_error") else ""
             lines.append(f"{mark} {esc(c['title'])}{err}")
+        if len(chats) > 40:
+            lines.append(f"…и ещё {len(chats) - 40}. Полный список в приложении.")
         await self.send_text("\n".join(lines))
 
     async def cmd_add(self, ref: str) -> None:
@@ -351,14 +381,16 @@ class BotService:
             return
         await self.send_text("Чат добавлен. Начну читать при ближайшей проверке.")
         if self.scan:
-            asyncio.create_task(self.scan(True))
+            task = asyncio.create_task(self.scan(True))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
     # ------------------------------------------------------------ кнопки ----
     async def on_callback(self, cb: dict) -> None:
         user_id = (cb.get("from") or {}).get("id")
         cb_id = cb["id"]
         if not self._is_owner(user_id):
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Это личный бот")
+            await self._ack(cb_id, "Это личный бот")
             return
         data = cb.get("data") or ""
         msg = cb.get("message") or {}
@@ -369,11 +401,11 @@ class BotService:
         try:
             oid = int(parts[-1])
         except ValueError:
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+            await self._ack(cb_id)
             return
         row = store.get_order(self.db, oid)
         if row is None:
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Этого заказа уже нет")
+            await self._ack(cb_id, "Этого заказа уже нет")
             return
 
         if kind == "fb":
@@ -381,37 +413,37 @@ class BotService:
                 store.set_feedback(self.db, oid, "up")
                 if row["state"] == "hidden":
                     store.set_state(self.db, oid, "new")
-                await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Запомнил: похожих станет больше")
+                await self._ack(cb_id, "Запомнил: похожих станет больше")
                 await self._mark(chat_id, message_id, row, "👍")
             else:
                 rows = [[btn(label, f"why:{code}:{oid}")] for code, label in store.FEEDBACK_REASONS.items()]
-                await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+                await self._ack(cb_id)
                 await self.api.call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
         elif kind == "why":
             code = parts[1]
             store.set_feedback(self.db, oid, "down", code)
             store.set_state(self.db, oid, "hidden")
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Скрыл. Учту при подборе")
+            await self._ack(cb_id, "Скрыл. Учту при подборе")
             await self._mark(chat_id, message_id, row, "👎 " + store.FEEDBACK_REASONS.get(code, ""), drop_buttons=True)
         elif kind == "save":
             store.set_state(self.db, oid, "saved" if row["state"] != "saved" else "new")
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Отложено")
+            await self._ack(cb_id, "Отложено")
         elif kind == "show":
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+            await self._ack(cb_id)
             await self.send_card(row)
         elif kind == "offer":
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+            await self._ack(cb_id)
             await self.send_offer(row, 0)
         elif kind == "redo":
             variant = int(parts[1])
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+            await self._ack(cb_id)
             await self.send_offer(row, variant)
         elif kind == "sent":
             store.mark_offered(self.db, oid, self.pipeline.default_price(row))
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id, text="Отметил: предложение отправлено")
+            await self._ack(cb_id, "Отметил: предложение отправлено")
             await self._mark(chat_id, message_id, row, "✉️ отправлено", drop_buttons=True, keep_text=True)
         else:
-            await self.api.call("answerCallbackQuery", callback_query_id=cb_id)
+            await self._ack(cb_id)
 
     async def _mark(self, chat_id: int, message_id: int, row: dict, tag: str, *, drop_buttons: bool = False,
                     keep_text: bool = False) -> None:

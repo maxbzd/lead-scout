@@ -15,19 +15,20 @@ from .util import squash
 
 # ---------------------------------------------------------------- бюджет ----
 
-_NUM = r"\d{1,3}(?:[   ]\d{3})+|\d+(?:[.,]\d+)?"
-_MULT = r"(?:\s?(?:к|k|тыс\.?|тысяч\w*|т\.\s?р\.?|млн|mln)(?![\w]))?"
-_CUR = r"(?:\s?(?:₽|руб\w*|р(?![\w])\.?|rub|\$|usd|usdt|долл\w*|€|eur|евро))?"
+_NUM = r"\d{1,3}(?:[.,]\d{3}){2,}|\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+(?:[.,]\d+)?"
+_MULT = r"(?:\s?(?:к|k|тыс\.?|тысяч\w*|т\.?\s?р\.?|млн|mln)(?![\w]))?"
+_CUR = r"(?:\s?(?:₽|руб\w*|р(?![\w])\.?|rub|\$|usd|usdt|долл\w*|бакс\w*|у\.\s?е\.?(?![\w])|€|eur|евро))?"
 _MONEY = re.compile(
     rf"(?P<pre>[$€₽])?\s?(?P<num>{_NUM})(?P<mult>{_MULT})(?P<cur>{_CUR})",
     re.IGNORECASE,
 )
 _RANGE_SEP = re.compile(r"^\s*(?:-|–|—|…|до|по|\.\.)\s*$", re.IGNORECASE)
 _CONTEXT = re.compile(
-    r"(бюджет|цена|стоимост|оплат|плач|заплат|гонорар|ставка|вознагражд|готов\s+платить|предлага\w*\s+\d|"
+    r"(бюджет|цена|стоимост|оплат|плач|заплат|гонорар|ставка|вознагражд|готов\s+платить|(?<![\w])зп(?![\w])|"
     r"за\s+проект|за\s+работу|фикс|₽|руб|\$|usd|€|eur)",
     re.IGNORECASE,
 )
+_PRICE_LEAD = re.compile(r"(?:\bза|\bна|\bдо|\bцена|\bпредлага\w*|\bплачу|\bзаплачу|\bготов\s+платить|(?<![\w])зп)\s*[:\-–—]?\s*$", re.IGNORECASE)
 _TIME_AFTER = re.compile(r"^\s*(дн|день|дней|дня|сут|недел|нед\b|мес|час|ч\b|мин|лет|года|год|%|шт|чел|слов|символ|страниц|стр\b)", re.IGNORECASE)
 
 
@@ -56,7 +57,7 @@ def _currency(pre: str | None, cur: str | None) -> str | None:
     token = ((pre or "") + " " + (cur or "")).strip().lower()
     if not token:
         return None
-    if "$" in token or "usd" in token or "долл" in token or "usdt" in token:
+    if "$" in token or "usd" in token or "долл" in token or "usdt" in token or "бакс" in token or "у.е" in token or "у. е" in token:
         return "USD"
     if "€" in token or "eur" in token or "евро" in token:
         return "EUR"
@@ -65,7 +66,7 @@ def _currency(pre: str | None, cur: str | None) -> str | None:
 
 def _period(window: str) -> str:
     w = window.lower()
-    if re.search(r"(в\s+час|/\s?час|за\s+час|/\s?ч\b|per hour|/hr|почасов)", w):
+    if re.search(r"(в\s+час|/\s?час|за\s+(?:\d+\s+)?час|/\s?ч\b|per hour|/hr|почасов)", w):
         return "hour"
     if re.search(r"(в\s+месяц|/\s?мес|ежемесяч|в\s+мес\b|per month)", w):
         return "month"
@@ -76,6 +77,7 @@ def _period(window: str) -> str:
 
 def parse_budget(text: str) -> Budget:
     t = text.replace("\u00a0", " ")
+    t = _PHONE.sub(" ", _EMAIL.sub(" ", t))  # номер телефона и почта не должны превращаться в «бюджет»
     cands: list[dict] = []
     for m in _MONEY.finditer(t):
         try:
@@ -84,18 +86,19 @@ def parse_budget(text: str) -> Budget:
             continue
         mult = (m.group("mult") or "").strip().lower().rstrip(".")
         cur = _currency(m.group("pre"), m.group("cur"))
-        if mult in {"к", "k", "тыс"} or mult.startswith("тысяч") or mult.startswith("т."):
+        if mult in {"к", "k", "тыс", "тр"} or mult.startswith("тысяч") or mult.startswith("т."):
             value *= 1000
         elif mult in {"млн", "mln"}:
             value *= 1_000_000
         after = t[m.end(): m.end() + 14]
         before = t[max(0, m.start() - 30): m.start()]
-        strong = bool(cur or mult or _CONTEXT.search(before) or _CONTEXT.search(after[:6]))
+        direct = bool(_PRICE_LEAD.search(before)) and value >= 1000  # «за 15000», «предлагаю 5000», «цена 7000»
+        strong = bool(cur or mult or direct or _CONTEXT.search(before) or _CONTEXT.search(after[:6]))
         if _TIME_AFTER.match(after) and not (cur or mult):
             strong = False
-        if not cur and not mult and 1900 <= value <= 2100:
-            strong = False
-        if value < 50 and not cur and mult not in {"к", "k"}:
+        if not cur and not mult and not direct and 1900 <= value <= 2100 and not _CONTEXT.search(before):
+            strong = False  # похоже на год
+        if value < 50 and not cur and not mult:
             strong = False
         cands.append({"start": m.start(), "end": m.end(), "value": value, "cur": cur, "mult": bool(mult), "strong": strong})
 
@@ -126,7 +129,7 @@ def parse_budget(text: str) -> Budget:
         # «30-50к»: множитель относится к обоим числам
         if second["mult"] and not first["mult"] and first["value"] < 1000 <= second["value"]:
             low, high = sorted([first["value"] * 1000, second["value"]])
-    window = t[max(0, first["start"] - 40): last_end + 40]
+    window = t[max(0, first["start"] - 14): last_end + 16]  # период ищем только рядом с суммой
     pre_is_ot = bool(re.search(r"(от|from)\s*$", t[max(0, first["start"] - 6): first["start"]], re.IGNORECASE))
     period = _period(window)
     cur = cur or "RUB"
@@ -149,7 +152,7 @@ def to_rub(amount: float | None, currency: str, usd_rub: float, eur_rub: float) 
 
 _DEADLINE = re.compile(
     r"(?:срок\w*|за|в\s+течени\w+|до|в\s+теч\.?|займет|займёт|уложить\w*\s+в|успеть\s+за|дедлайн)?\s*"
-    r"(?P<n>\d{1,3})\s*(?:-\s*\d{1,3}\s*)?(?P<u>дн\w*|день|суток|сут\w*|недел\w*|нед\b\.?|мес\w*)",
+    r"(?P<n>\d{1,3}(?:[.,]\d)?)\s*(?:-\s*\d{1,3}\s*)?(?P<u>дн\w*|день|суток|сут\w*|недел\w*|нед\b\.?|мес\w*)",
     re.IGNORECASE,
 )
 
@@ -158,18 +161,18 @@ def parse_deadline_days(text: str) -> int | None:
     t = text.lower()
     for m in _DEADLINE.finditer(t):
         lead = t[max(0, m.start() - 12): m.start()]
-        n = int(m.group("n"))
+        n = float(m.group("n").replace(",", "."))
         u = m.group("u")
         # «2 недели опыта» и «3 мес. работы» это не срок: нужен слово-маркер срока рядом
         marker = bool(re.search(r"(срок|за|течени|до|займ|уложи|успе|дедлайн)", t[m.start(): m.start() + 12] + lead))
         if not marker:
             continue
         if u.startswith(("дн", "день", "сут")):
-            return max(1, n)
+            return max(1, round(n))
         if u.startswith("нед"):
-            return max(1, n * 7)
+            return max(1, round(n * 7))
         if u.startswith("мес"):
-            return max(1, n * 30)
+            return max(1, round(n * 30))
     if re.search(r"(за|на)\s+(?:одну\s+)?недел", t) or "в течение недели" in t:
         return 7
     if re.search(r"(за|на)\s+(?:пару|несколько|2-3|два-три)\s+дн", t):
@@ -190,7 +193,7 @@ _TME = re.compile(r"(?:https?://)?t\.me/(?!joinchat|\+|c/|addlist|share|proxy|so
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _URL = re.compile(r"https?://[^\s<>()\"']+", re.IGNORECASE)
 _PHONE = re.compile(r"(?<!\d)(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)")
-_WRITE_HINT = re.compile(r"(пиш\w*|связ\w*|лс|личк|контакт|тг|tg|telegram|телеграм|отклик|обращ|напиш)", re.IGNORECASE)
+_WRITE_HINT = re.compile(r"(пиш\w*|писа\w*|ответ\w*|звони\w*|связ\w*|лс|личк|контакт|тг|tg|telegram|телеграм|отклик|обращ|напиш)", re.IGNORECASE)
 
 
 @dataclass
@@ -216,7 +219,7 @@ def parse_contact(text: str, author_username: str | None = None) -> Contact:
         if _WRITE_HINT.search(ctx):
             best = name
             break
-    if best is None and candidates:
+    if best is None and candidates and not author_username and not emails:
         best = candidates[-1][1] if len(candidates) > 1 and not _WRITE_HINT.search(text) else candidates[0][1]
     if best and best.lower().endswith("bot") and author_username:
         best = None
@@ -251,7 +254,7 @@ _POSITIVE = re.compile(
 _SEEKER = re.compile(
     r"(ищу\s+(?:заказ|проект|клиент|работу|подработ)|возьму\s+(?:заказ|проект)|беру\s+(?:заказ|проект)|принимаю\s+заказ|"
     r"предлагаю\s+(?:услуг|свои)|мои\s+услуг|мо[её]\s+портфолио|открыт\s+для\s+(?:заказ|предложен)|свободен\s+для|"
-    r"резюме|готов\s+(?:взяться|выполнить|помочь)|выполню|сделаю\s+(?:быстро|недорого|качественно)|"
+    r"в\s+штат|full[\s-]?time|полная\s+занятость|график\s+5/2|оформление\s+по\s+тк|в\s+команду|(?:моё|мое|мо[её])\s+резюме|готов\s+(?:взяться|выполнить|помочь)|выполню|сделаю\s+(?:быстро|недорого|качественно)|"
     r"делаю\s+(?:на\s+заказ|под\s+ключ|быстро|недорого)|помогу\s+(?:вам|с)|в\s+поиске\s+(?:заказ|работ|проект)|"
     r"(?:^|[.!]\s*)я\s+(?:разработчик|дизайнер|специалист|программист|фрилансер|маркетолог|копирайтер)|"
     r"портфолио\s+в\s+(?:профиле|закрепе|шапке|описании)|мои\s+работы\s+в)",
@@ -322,8 +325,10 @@ class Flag:
 
 _SCAM_RULES: list[tuple[str, str, str, re.Pattern[str]]] = [
     ("deposit", "Просят деньги вперёд: залог, взнос или оплату доступа", "high",
-     re.compile(r"(залог|депозит|вступительн\w+\s+взнос|страхов\w+\s+взнос|гарантийн\w+\s+(?:взнос|платеж|платёж)|"
-                r"внес\w+\s+\d|оплатить\s+(?:доступ|вход|обучение|курс|регистрац)|предоплат\w+\s+от\s+исполнител)", re.IGNORECASE)),
+     re.compile(r"((?:внес\w+|оплат\w+|заплат\w+)\s+(?:залог|депозит)|(?:залог|депозит)\w*\s+(?:за\s+(?:доступ|тз|участие|обучение)|\d)|"
+                r"вступительн\w+\s+взнос|страхов\w+\s+взнос|гарантийн\w+\s+(?:взнос|платеж|платёж)|"
+                r"внес\w+\s+(?:взнос|предоплат\w+|\d[\d\s]*(?:₽|руб|\$)\s+за\s+(?:доступ|участие|обучение))|"
+                r"оплатить\s+(?:вход|обучение|курс|регистрац\w+|доступ\s+к\s+(?:тз|заказ\w*|закрыт\w+|чат\w*))|предоплат\w+\s+от\s+исполнител)", re.IGNORECASE)),
     ("training", "Нужно платить за обучение или курс", "high",
      re.compile(r"(платное\s+обучение|(?:предоплат\w+|оплат\w+|взнос\w*)\s+за\s+обучени\w+|обучение\s+платное|пройд\w+\s+(?:платное\s+)?обучение|купи\w*\s+курс|курс\s+\d[\d\s]*(?:₽|руб)|обучим\s+за)", re.IGNORECASE)),
     ("income", "Обещают нереальный доход без опыта", "high",

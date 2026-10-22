@@ -14,7 +14,7 @@ from telethon.sessions import StringSession
 from .. import store
 from ..db import Database
 from ..models import RawMessage
-from ..util import iso
+from ..util import iso, parse_iso
 
 log = logging.getLogger("leadscout.telegram")
 
@@ -64,10 +64,23 @@ def sender_info(sender: Any) -> dict:
     return {"id": None, "username": None, "name": None, "flags": {}}
 
 
+def _hidden_links(msg: Any) -> list[str]:
+    """Ссылки, спрятанные за словами («Писать сюда»): иначе контакт заказчика теряется."""
+    out: list[str] = []
+    for ent in getattr(msg, "entities", None) or []:
+        url = getattr(ent, "url", None)
+        if isinstance(ent, types.MessageEntityTextUrl) and isinstance(url, str) and ("t.me/" in url or url.startswith("mailto:")):
+            out.append(url)
+    return out[:3]
+
+
 def message_to_raw(msg: Any, chat_row: dict, sender: Any) -> RawMessage | None:
     text = getattr(msg, "message", None) or ""
     if not text.strip():
         return None
+    extra = [u for u in _hidden_links(msg) if u not in text]
+    if extra:
+        text = text + "\n" + " ".join(extra)
     info = sender_info(sender)
     posted = msg.date
     if posted.tzinfo is None:
@@ -114,6 +127,7 @@ class TelegramReader:
         self._by_tg: dict[int, int] = {}
         self._dialogs_loaded = False
         self._handler = None
+        self.seen: dict[int, int] = {}  # чат -> самый новый просмотренный id, включая сообщения без текста
 
     # ------------------------------------------------------------ жизнь ----
     async def start(self) -> None:
@@ -203,7 +217,15 @@ class TelegramReader:
         """Догоняет пропущенное во всех включённых чатах."""
         if not self.ready:
             return []
+        assert self.client is not None
+        if not self.client.is_connected():
+            try:
+                await asyncio.wait_for(self.client.connect(), 20)  # после обрыва сети Telethon сам не оживает
+            except Exception:
+                self.state, self.error = "error", "Нет связи с Telegram. Пробую подключиться снова"
+                return []
         out: list[RawMessage] = []
+        self.seen = {}
         for row in self.db.all("SELECT * FROM chats WHERE enabled=1 AND is_demo=0"):
             try:
                 out.extend(await self._fetch_chat(row))
@@ -228,17 +250,26 @@ class TelegramReader:
         first = row["last_msg_id"] == 0
         out: list[RawMessage] = []
         senders: dict[int, Any] = {}
+        newest = 0
+        last = parse_iso(row.get("last_scan_at"))
+        stale = (datetime.now(UTC) - last) if last else None
         if first:
             horizon = datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS)
             it = self.client.iter_messages(ent, limit=FIRST_SCAN_LIMIT)
+        elif stale is not None and stale > timedelta(hours=6):
+            # давно не читали (сервер был выключен): идём от недавнего времени, а не от старого курсора, чтобы свежее не ждало часами
+            start = max(last - timedelta(minutes=10), datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
+            horizon = None
+            it = self.client.iter_messages(ent, offset_date=start, limit=CATCHUP_LIMIT, reverse=True)
         else:
             horizon = None
             it = self.client.iter_messages(ent, min_id=row["last_msg_id"], limit=CATCHUP_LIMIT, reverse=True)
         async for msg in it:
             if horizon and msg.date < horizon:
                 break
-            if getattr(msg, "action", None) is not None:
-                continue
+            newest = max(newest, getattr(msg, "id", 0) or 0)
+            if getattr(msg, "action", None) is not None or getattr(msg, "out", False):
+                continue  # служебные и ваши собственные сообщения не заказы
             sid = getattr(msg, "sender_id", None)
             sender = senders.get(sid)
             if sender is None and sid is not None:
@@ -252,6 +283,8 @@ class TelegramReader:
                 out.append(raw)
         if first:
             out.reverse()  # сначала старые
+        if newest:
+            self.seen[row["id"]] = newest
         self.db.run("UPDATE chats SET last_scan_at=?, last_error=NULL WHERE id=?", (iso(), row["id"]))
         if not out and first and row["last_msg_id"] == 0:
             # пустой чат: запоминаем, что первый просмотр был
@@ -259,6 +292,12 @@ class TelegramReader:
             if latest:
                 store.bump_chat_cursor(self.db, row["id"], latest[0].id)
         return out
+
+    def commit_cursors(self) -> None:
+        """Сообщения обработаны: двигаем курсоры, в том числе через картинки и служебные записи без текста."""
+        for chat_id, msg_id in self.seen.items():
+            store.bump_chat_cursor(self.db, chat_id, msg_id)
+        self.seen = {}
 
     def _chat_error(self, chat_id: int, text: str) -> None:
         self.db.run("UPDATE chats SET last_error=?, last_scan_at=? WHERE id=?", (text, iso(), chat_id))
@@ -382,25 +421,32 @@ class TelegramLogin:
             await self.client.connect()
             sent = await self.client.send_code_request(phone)
             self.code_hash = sent.phone_code_hash
-        except errors.PhoneNumberInvalidError as e:
-            raise LoginError("Номер не подошёл. Введите его с кодом страны, например +79991234567") from e
-        except errors.ApiIdInvalidError as e:
-            raise LoginError("api_id или api_hash неверные. Проверьте их на my.telegram.org") from e
-        except errors.PhoneNumberBannedError as e:
-            raise LoginError("Этот номер заблокирован в Telegram") from e
-        except errors.FloodWaitError as e:
-            raise LoginError(f"Слишком много попыток. Подождите {e.seconds // 60 + 1} мин.") from e
-        except errors.PhoneNumberFloodError as e:
-            raise LoginError("Слишком много запросов кода. Попробуйте позже") from e
         except Exception as e:
-            await self.close()
-            raise LoginError(f"Не получилось отправить код: {type(e).__name__}") from e
+            await self.close()  # не оставляем открытое соединение при любой ошибке
+            raise self._login_error(e) from e
+
+    @staticmethod
+    def _login_error(e: Exception) -> LoginError:
+        if isinstance(e, errors.PhoneNumberInvalidError):
+            return LoginError("Номер не подошёл. Введите его с кодом страны, например +79991234567")
+        if isinstance(e, errors.ApiIdInvalidError):
+            return LoginError("api_id или api_hash неверные. Проверьте их на my.telegram.org")
+        if isinstance(e, errors.PhoneNumberBannedError):
+            return LoginError("Этот номер заблокирован в Telegram")
+        if isinstance(e, errors.FloodWaitError):
+            return LoginError(f"Слишком много попыток. Подождите {e.seconds // 60 + 1} мин.")
+        if isinstance(e, errors.PhoneNumberFloodError):
+            return LoginError("Слишком много запросов кода. Попробуйте позже")
+        return LoginError(f"Не получилось отправить код: {type(e).__name__}")
 
     async def sign_in_code(self, code: str) -> str:
         """Возвращает 'ok' или 'password', если включена двухфакторная защита."""
         assert self.client is not None
+        digits = "".join(ch for ch in code if ch.isdigit())
+        if not digits:
+            raise LoginError("Введите код из Telegram цифрами")
         try:
-            await self.client.sign_in(self.phone, "".join(ch for ch in code if ch.isdigit()), phone_code_hash=self.code_hash)
+            await self.client.sign_in(self.phone, digits, phone_code_hash=self.code_hash)
             return "ok"
         except errors.SessionPasswordNeededError:
             return "password"
