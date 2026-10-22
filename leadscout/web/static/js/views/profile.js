@@ -4,7 +4,7 @@ import { post, put } from '../api.js';
 import { S, cache, loadNotif, loadProfile, loadStatus } from '../state.js';
 import { $, closeSheet, debounce, esc, html, I, money, openSheet, paint, plural, raw, ring, sheetHead, toast } from '../ui.js';
 import { openChats } from './chats.js';
-import { openConnect } from './connect.js';
+import { openConnect, setAiControl } from './connect.js';
 import { refreshFeed } from './feed.js';
 
 const PAY = [['fixed', 'Фикс за проект'], ['hourly', 'Почасовая'], ['retainer', 'Абонемент']];
@@ -220,7 +220,8 @@ export function paintConns() {
   paint(el, [
     connRow('tg', 'Telegram', tgOk ? 'подключён' : tg.state === 'demo' ? 'демо' : 'не подключён', tgSub, tgOk),
     connRow('bot', 'Бот', b.state === 'ready' && b.paired ? 'подключён' : b.state === 'ready' ? 'ждёт Start' : 'не подключён', bSub, b.state === 'ready' && b.paired),
-    connRow('ai', 'ИИ', l.mode !== 'rules' ? 'включён' : 'выключен', lSub, l.mode !== 'rules'),
+    connRow('ai', 'ИИ', l.mode === 'rules' ? 'выключен' : l.control && !l.control.active ? 'на паузе' : 'включён', lSub, l.mode !== 'rules'),
+    l.control ? html`<div class="sw-row"><div><div class="t">Пауза ИИ</div><div class="s">${l.control.reason === 'backlog' ? `Включилась сама: неразобранных ${l.control.backlog}` : 'Не тратить запросы, пока вы разбираете заказы'}</div></div><button class="sw" role="switch" aria-checked="${!l.control.active}" data-act="ai-pause-quick" aria-label="Пауза ИИ"></button></div>` : '',
   ]);
 }
 
@@ -286,6 +287,14 @@ export const profileActions = {
     S.profile.min_budget = S.presets[el.dataset.v];
     paintMoney();
     changed();
+  },
+  'ai-pause-quick': async () => {
+    const c = S.status.llm.control;
+    try {
+      await setAiControl(c.reason === 'backlog' ? { auto: false } : { paused: !c.paused });
+      paintConns();
+      toast(S.status.llm.control.active ? 'ИИ снова работает' : 'ИИ на паузе: расходов нет');
+    } catch (e) { toast(e.message); }
   },
   'recall-toggle': (el) => {
     S.profile.recall = !S.profile.recall;
