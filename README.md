@@ -116,6 +116,7 @@ pytest                                  # тесты
 ruff check .                            # линтер Python
 npx eslint -c eslint.config.js leadscout/web/static   # линтер JS
 python scripts/make_icons.py            # перерисовать значки
+uv pip compile pyproject.toml --python-version 3.12 --generate-hashes -o requirements.lock   # обновить зафиксированные зависимости
 python scripts/vendor_fonts.py          # заново скачать шрифты
 ```
 

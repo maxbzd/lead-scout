@@ -63,3 +63,13 @@ def test_service_worker_precaches_every_script():
 def test_500_has_security_headers(client):
     r = client.get("/api/orders/99999999999999999999")
     assert r.status_code in (401, 404)  # без входа 401, но не 500
+
+
+def test_dependency_lock_is_hash_pinned():
+    """Зависимости в Docker ставятся строго по списку с хешами: каждая запись закреплена по версии и по хешу."""
+    from pathlib import Path
+
+    lock = (Path(__file__).resolve().parent.parent / "requirements.lock").read_text(encoding="utf-8")
+    blocks = [b for b in lock.split("\n\n") if "==" in b]
+    assert blocks and all("--hash=sha256:" in b for b in blocks)
+    assert "litellm" not in lock.lower()
