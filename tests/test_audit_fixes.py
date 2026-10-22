@@ -35,7 +35,7 @@ async def test_failed_message_is_retried_and_cursor_not_moved(rt, monkeypatch):
 
     monkeypatch.setattr(rt.pipeline, "_save", real_save)
     rt.db.run("UPDATE messages SET fetched_at=? WHERE tg_msg_id=500", (iso(now_utc() - timedelta(minutes=10)),))
-    assert await rt.pipeline.retry_stuck() == 1
+    assert len(await rt.pipeline.retry_stuck()) == 1
     assert rt.db.scalar("SELECT COUNT(*) FROM orders") == 1
 
 

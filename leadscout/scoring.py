@@ -61,9 +61,9 @@ def recommend_price(order: OrderView, profile: Profile, won_history: list[float]
             notes.append(f"Похожие вы брали примерно за {fmt_money(med)}.")
         return _round(lo), _round(hi), " ".join(notes)
     if profile.day_rate > 0:
-        d = days or 5
+        d = min(max(1, round((days or 7) * 5 / 7)), 10)  # срок не равен трудозатратам: считаем рабочие дни и не больше десяти
         base = profile.day_rate * d
-        note = f"Бюджет не указан. По вашей ставке {fmt_money(profile.day_rate)} в день на {d} дн. это {fmt_money(base)}."
+        note = f"Бюджет не указан. По вашей ставке {fmt_money(profile.day_rate)} в день на {d} раб. дн. это {fmt_money(base)}."
         if won_history:
             med = sorted(won_history)[len(won_history) // 2]
             note += f" Похожие вы брали примерно за {fmt_money(med)}."

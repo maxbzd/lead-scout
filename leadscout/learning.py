@@ -46,7 +46,7 @@ def learned(db: Database, limit: int = 14) -> Learned:
         w = UP_WEIGHT if up else DOWN_WEIGHT
         decay = 1.0 if i < 40 else 0.5
         # «дёшево», «не те сроки», «подозрительно» не значит «навык не мой»: такие 👎 навыки не штрафуют
-        if up or (r.get("feedback_reason") or "other") in {"profile", "other"}:
+        if up or r.get("feedback_reason") == "profile":
             for k in _view_keys(r):
                 weights[k] = max(-6.0, min(6.0, weights.get(k, 0.0) + w * decay))
         chat_w[r["chat_id"]] = chat_w.get(r["chat_id"], 0.0) + (1 if up else -1)

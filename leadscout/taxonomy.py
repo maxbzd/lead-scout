@@ -11,7 +11,8 @@ TAXONOMY: dict[str, tuple[str, list[str]]] = {
     "llm": (
         "LLM",
         ["llm", "gpt", "chatgpt", "claude", "gemini", "нейросет", "нейро", "ии", "ai", "openai",
-         "anthropic", "llama", "yandexgpt", "gigachat", "языков", "генеративн", "дообуч", "файнтюн", "fine-tun", "lora"],
+         "anthropic", "llama", "yandexgpt", "gigachat", "языков", "генеративн", "дообуч", "файнтюн", "fine-tun", "lora",
+         "гпт", "gpt", "deepseek", "дипсик", "qwen", "grok", "mistral", "искусственн", "машинн", "ml", "whisper"],
     ),
     "prompt": ("Prompt", ["промпт", "prompt", "промт"]),
     "rag": ("RAG", ["rag", "векторн", "эмбеддинг", "embedding", "база знаний", "базе знаний", "базы знаний", "по документ"]),

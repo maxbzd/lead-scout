@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -39,8 +40,8 @@ class Notifier:
         sent = 0
         for oid in order_ids:
             row = store.get_order(self.db, oid)
-            if not row or row["verdict"] not in {"match", "maybe"} or row["score"] < n.instant_threshold:
-                continue
+            if not row or row["verdict"] not in {"match", "maybe"} or row["score"] < n.instant_threshold or row.get("chat_demo"):
+                continue  # демо-заказы живому владельцу не шлём
             if row["state"] != "new" or row["feedback"] or row["alert_state"] != "none":
                 continue
             age = minutes_ago(row["posted_at"], now)
@@ -54,16 +55,39 @@ class Notifier:
                 await bot.send_card(row, "Новый заказ" if row["verdict"] == "match" else "Возможно, подойдёт")
             except Exception:
                 log.warning("send failed for %s", oid, exc_info=True)
+                self.db.run("UPDATE orders SET alert_state='retry' WHERE id=?", (oid,))  # повторим позже, а не потеряем
                 continue
             self.db.run("UPDATE orders SET alert_state='sent', alerted_at=? WHERE id=?", (iso(), oid))
             sent += 1
+            await asyncio.sleep(0.4)  # не частим: у Telegram есть ограничение на число сообщений
+        return sent
+
+    async def retry_failed(self, now: datetime | None = None) -> int:
+        """Уведомления, которые не ушли из-за сбоя сети или лимита Telegram, отправляем повторно."""
+        bot = self._bot()
+        n = load_notifications(self.db)
+        if bot is None or n.paused:
+            return 0
+        rows = self.db.all(
+            store.ORDER_SELECT + " WHERE o.alert_state='retry' AND o.state='new' AND o.feedback IS NULL AND c.is_demo=0 "
+            "AND o.created_at>=? ORDER BY o.score DESC LIMIT 5", (iso((now or now_utc()) - timedelta(hours=12)),))
+        sent = 0
+        for r in rows:
+            try:
+                await bot.send_card(r, "Новый заказ" if r["verdict"] == "match" else "Возможно, подойдёт")
+            except Exception:
+                log.warning("retry failed for %s", r["id"], exc_info=True)
+                break
+            self.db.run("UPDATE orders SET alert_state='sent', alerted_at=? WHERE id=?", (iso(), r["id"]))
+            sent += 1
+            await asyncio.sleep(0.4)
         return sent
 
     # -------------------------------------------------------- сводка ----
-    def _digest_rows(self, since_iso: str, limit: int = 15) -> list[dict]:
+    def _digest_rows(self, since_iso: str, limit: int = 45) -> list[dict]:
         return self.db.all(
             store.ORDER_SELECT + " WHERE o.verdict IN ('match','maybe') AND o.state='new' AND o.feedback IS NULL AND o.offered_at IS NULL "
-            "AND o.alert_state NOT IN ('sent','digested') AND o.created_at>=? ORDER BY (o.verdict='match') DESC, o.score DESC, o.posted_at DESC LIMIT ?",
+            "AND c.is_demo=0 AND o.alert_state NOT IN ('sent','digested') AND (o.created_at>=? OR o.alert_state IN ('queued','retry')) ORDER BY (o.verdict='match') DESC, o.score DESC, o.posted_at DESC LIMIT ?",
             (since_iso, limit),
         )
 
@@ -85,7 +109,10 @@ class Notifier:
         note = ""
         if rejected or discarded:
             note = f"Отсеяно: {rejected}, не похоже на заказ: {discarded}. Загляните в «Отсеянные» и «Отброшено», если боитесь что-то пропустить."
-        await bot.send_digest(rows, f"{title}: {len(rows)}", note)
+        for i in range(0, len(rows), 15):  # длинная сводка уходит несколькими сообщениями, ничего не теряется
+            chunk = rows[i: i + 15]
+            last = i + 15 >= len(rows)
+            await bot.send_digest(chunk, f"{title}: {len(rows)}" if i == 0 else "Ещё заказы", note if last else "")
         state["last_digest"] = iso(now)  # отмечаем только после отправки: при сбое сводка уйдёт в следующий раз
         self.db.set_setting("notify_state", state)
         for r in rows:
@@ -114,11 +141,19 @@ class Notifier:
         tz = load_profile(self.db).tz
         if n.quiet and in_quiet_hours(tz, n.quiet_start, n.quiet_end, now):
             return 0
-        rows = self.db.all(store.ORDER_SELECT + " WHERE o.alert_state='queued' AND o.state='new' AND o.feedback IS NULL ORDER BY o.score DESC LIMIT 5")
+        rows = self.db.all(store.ORDER_SELECT + " WHERE o.alert_state='queued' AND o.state='new' AND o.feedback IS NULL AND c.is_demo=0 ORDER BY o.score DESC LIMIT 5")
+        sent = 0
         for r in rows:
-            await bot.send_card(r, "Заказ, пока вы отдыхали")
+            try:
+                await bot.send_card(r, "Заказ, пока вы отдыхали")
+            except Exception:
+                log.warning("queued send failed for %s", r["id"], exc_info=True)
+                self.db.run("UPDATE orders SET alert_state='retry' WHERE id=?", (r["id"],))
+                continue
             self.db.run("UPDATE orders SET alert_state='sent', alerted_at=? WHERE id=?", (iso(), r["id"]))
-        return len(rows)
+            sent += 1
+            await asyncio.sleep(0.4)
+        return sent
 
     # ------------------------------------------------------ итоги недели ----
     def weekly_due(self, now: datetime | None = None) -> bool:

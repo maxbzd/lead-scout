@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
               f"  Чтобы задать свой, укажите LS_PASSWORD в файле .env\n{bar}\n", flush=True)
 
     app = create_app(settings)
-    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=True, forwarded_allow_ips=os.environ.get("LS_TRUSTED_PROXIES", "127.0.0.1"), log_level="info")
+    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=True, timeout_graceful_shutdown=3, forwarded_allow_ips=os.environ.get("LS_TRUSTED_PROXIES", "127.0.0.1"), log_level="info")
     return 0
 
 

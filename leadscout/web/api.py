@@ -363,7 +363,7 @@ def get_profile(request: Request) -> dict:
 async def put_profile(body: Profile, request: Request) -> dict:
     rt = rt_of(request)
     saved = save_profile(rt.db, body)
-    asyncio.create_task(rt.pipeline.rescore_recent(use_llm=False))
+    rt.spawn(rt.pipeline.rescore_recent(use_llm=False))
     rt.bus.publish({"type": "orders", "ids": []})
     return {"profile": saved.model_dump()}
 
@@ -384,7 +384,7 @@ async def import_profile(body: ImportIn, request: Request) -> dict:
 @router.post("/profile/rescore")
 async def rescore(request: Request) -> dict:
     rt = rt_of(request)
-    n = await rt.pipeline.rescore_recent(use_llm=True, limit=40)
+    n = await rt.pipeline.rescore_recent(use_llm=rt.pipeline.ai_on(), limit=40)  # при паузе ИИ пересчёт идёт правилами
     return {"rescored": n}
 
 
@@ -415,7 +415,7 @@ class ChatAddIn(BaseModel):
 async def add_chat(body: ChatAddIn, request: Request) -> dict:
     rt = rt_of(request)
     chat_id = await rt.add_chat(body.link)
-    asyncio.create_task(rt.scan(False))
+    rt.spawn(rt.scan(False))
     return {"id": chat_id, "items": store.list_chats(rt.db)}
 
 
@@ -439,7 +439,7 @@ async def add_dialog(body: DialogIn, request: Request) -> dict:
     if src is None or not hasattr(src, "add_dialog"):
         raise TelegramProblem("Сначала подключите Telegram")
     chat_id = await src.add_dialog(body.tg_id)
-    asyncio.create_task(rt.scan(False))
+    rt.spawn(rt.scan(False))
     return {"id": chat_id, "items": store.list_chats(rt.db)}
 
 
@@ -480,7 +480,7 @@ async def resolve(sid: int, body: SuggestIn, request: Request) -> dict:
     if "min_budget" in action:
         profile.min_budget = action["min_budget"]
         save_profile(rt.db, profile)
-        asyncio.create_task(rt.pipeline.rescore_recent(use_llm=False))
+        rt.spawn(rt.pipeline.rescore_recent(use_llm=False))
     if "chat_id" in action:
         rt.chats_changed()
     return {"ok": True, "action": action}
@@ -632,7 +632,7 @@ async def demo(body: DemoIn, request: Request) -> dict:
     rt = rt_of(request)
     await rt.set_demo(body.on)
     if body.on:
-        asyncio.create_task(rt.scan(False))
+        rt.spawn(rt.scan(False))
     return {"demo": rt.demo_enabled()}
 
 

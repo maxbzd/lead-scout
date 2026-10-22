@@ -15,6 +15,7 @@ from leadscout.sources.telegram import (
     message_to_raw,
     sender_info,
 )
+from leadscout.util import iso
 
 
 def user(**kw):
@@ -42,8 +43,16 @@ class FakeClient:
         self.error = error
         self.calls = []
 
-    def iter_messages(self, ent, limit=None, min_id=None, reverse=False):
-        self.calls.append({"limit": limit, "min_id": min_id, "reverse": reverse})
+    connected = True
+
+    def is_connected(self):
+        return self.connected
+
+    async def connect(self):
+        self.connected = True
+
+    def iter_messages(self, ent, limit=None, min_id=None, reverse=False, offset_date=None):
+        self.calls.append({"limit": limit, "min_id": min_id, "reverse": reverse, "offset_date": offset_date})
         items = list(self.messages)
         if min_id is not None:
             items = [m for m in items if m.id > min_id]
@@ -258,3 +267,65 @@ async def test_login_normalises_phone_and_maps_errors(monkeypatch):
     with pytest.raises(tg.LoginError, match="Пароль"):
         await login.sign_in_password("bad")
     assert login.session_string() == "SESSION"
+
+
+async def test_dead_connection_is_revived_before_fetching(db):
+    chat_row(db)
+    client = FakeClient([msg(1, "привет", 3)])
+    client.connected = False
+    r = reader(db, client)
+    await r.fetch()
+    assert client.connected is True
+
+    async def fail():
+        raise OSError("нет сети")
+
+    client.connected = False
+    client.connect = fail
+    assert await r.fetch() == [] and r.state == "error"  # дальше сработает автоматическое переподключение
+
+
+async def test_cursor_moves_over_media_without_text(db):
+    row = chat_row(db)
+    db.run("UPDATE chats SET last_msg_id=100 WHERE id=?", (row["id"],))
+    row = db.one("SELECT * FROM chats WHERE id=?", (row["id"],))
+    media = [msg(i, "", 3) for i in range(101, 1101)]  # 1000 сообщений-картинок
+    r = reader(db, FakeClient(media))
+    assert await r._fetch_chat(row) == [] and r.seen[row["id"]] == 1100
+    r.commit_cursors()
+    assert db.one("SELECT last_msg_id FROM chats WHERE id=?", (row["id"],))["last_msg_id"] == 1100
+
+
+async def test_own_messages_are_not_orders(db):
+    row = chat_row(db)
+    mine = msg(5, "Ищу разработчика Telegram-бота, бюджет 30 000 руб, срок неделя", 3)
+    mine.out = True
+    other = msg(6, "Нужен бот, бюджет 20 000 руб", 2)
+    r = reader(db, FakeClient([mine, other]))
+    out = await r._fetch_chat(row)
+    assert [m.tg_msg_id for m in out] == [6]
+
+
+async def test_stale_chat_reads_from_recent_date_not_old_cursor(db):
+    row = chat_row(db)
+    db.run("UPDATE chats SET last_msg_id=50, last_scan_at=? WHERE id=?",
+           (iso(datetime.now(UTC) - timedelta(days=3)), row["id"]))
+    row = db.one("SELECT * FROM chats WHERE id=?", (row["id"],))
+    client = FakeClient([msg(60, "свежее", 3)])
+    await reader(db, client)._fetch_chat(row)
+    assert client.calls[0]["offset_date"] is not None and client.calls[0]["min_id"] is None
+
+
+def test_hidden_link_becomes_contact():
+    row = {"id": 1, "username": "x_chat", "tg_id": None}
+    m = msg(9, "Нужен бот, писать сюда. Бюджет 20 000 руб", 3)
+    m.entities = [types.MessageEntityTextUrl(offset=18, length=4, url="https://t.me/real_client")]
+    raw = message_to_raw(m, row, user())
+    assert "https://t.me/real_client" in raw.text
+
+
+async def test_empty_login_code_is_rejected():
+    login = tg.TelegramLogin(1, "h")
+    login.client = object()
+    with pytest.raises(tg.LoginError, match="цифрами"):
+        await login.sign_in_code("abc")

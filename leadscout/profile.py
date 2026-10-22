@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -28,7 +30,7 @@ class Profile(BaseModel):
     cases: list[Case] = Field(default_factory=list)
     tone: str = "warm"
     capacity: str = "free"
-    tz: str = "Europe/Moscow"
+    tz: str = Field(default_factory=lambda: os.environ.get("LS_TZ", "").strip() or "Europe/Moscow")
     unpaid_check: bool = True
     recall: bool = True  # «ничего не пропускать»: сомнительное показываем, а не прячем
 
@@ -41,6 +43,15 @@ class Profile(BaseModel):
             if item and item.lower() not in {s.lower() for s in seen} and len(item) <= 60:
                 seen.append(item)
         return seen[:40]
+
+    @field_validator("tz")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError, KeyError):
+            raise ValueError("неизвестный часовой пояс") from None
+        return v
 
     @field_validator("tone")
     @classmethod

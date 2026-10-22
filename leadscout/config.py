@@ -102,6 +102,10 @@ class Settings:
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.data_dir, 0o700)  # в папке лежат база, ключ шифрования и пароль: чужим читать не нужно
+        except OSError:
+            pass
 
     def resolve_password(self) -> tuple[str, bool]:
         """Пароль для входа. Если не задан, создаём случайный и храним в data/password.txt."""

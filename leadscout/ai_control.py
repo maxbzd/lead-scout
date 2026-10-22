@@ -6,16 +6,19 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from .db import Database
+from .util import iso, now_utc
 
 DEFAULT: dict[str, Any] = {"paused": False, "auto": True, "limit": 40}
 LIMITS = (20, 40, 80, 150)
 
 BACKLOG_SQL = (
-    "SELECT COUNT(*) FROM orders WHERE verdict IN ('match','maybe') AND state='new' AND feedback IS NULL AND offered_at IS NULL"
-)
+    "SELECT COUNT(*) FROM orders WHERE verdict IN ('match','maybe') AND state='new' AND feedback IS NULL AND offered_at IS NULL "
+    "AND created_at>=?"
+)  # считаем только последнюю неделю: давнее забытое не должно держать ИИ на паузе вечно
 
 
 def load(db: Database) -> dict[str, Any]:
@@ -37,7 +40,7 @@ def save(db: Database, patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def backlog(db: Database) -> int:
-    return int(db.scalar(BACKLOG_SQL, default=0) or 0)
+    return int(db.scalar(BACKLOG_SQL, (iso(now_utc() - timedelta(days=7)),), default=0) or 0)
 
 
 def state(db: Database) -> dict[str, Any]:
