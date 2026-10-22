@@ -173,6 +173,8 @@ async def promote_discarded(message_id: int, request: Request) -> dict:
 
 
 def _row(rt: Runtime, order_id: int) -> dict:
+    if not 0 < order_id < 2**62:
+        raise HTTPException(404, "Заказ не найден")
     row = store.get_order(rt.db, order_id)
     if row is None:
         raise HTTPException(404, "Заказ не найден")

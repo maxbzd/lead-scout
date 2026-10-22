@@ -53,7 +53,9 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
     @app.exception_handler(Exception)
     async def unexpected(request: Request, exc: Exception):
         log.exception("unhandled error on %s", request.url.path)
-        return JSONResponse({"detail": "Что-то пошло не так на сервере. Попробуйте ещё раз"}, status_code=500)
+        # этот обработчик работает вне общего слоя заголовков, поэтому защитные заголовки задаём здесь
+        return JSONResponse({"detail": "Что-то пошло не так на сервере. Попробуйте ещё раз"}, status_code=500,
+                            headers={"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
@@ -66,7 +68,7 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
         path = request.url.path
         if path.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store"
-        elif path.startswith(("/fonts/", "/icons/")):
+        elif path.endswith((".woff2", ".png")) and path.startswith(("/fonts/", "/icons/")):
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         else:
             resp.headers["Cache-Control"] = "no-cache"

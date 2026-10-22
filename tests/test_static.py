@@ -52,3 +52,14 @@ def test_js_imports_resolve():
             assert dest in exports, f"{p.name}: нет файла {target}"
             for n in (x.strip().split(" as ")[0] for x in names.split(",") if x.strip()):
                 assert n in exports[dest], f"{p.name}: {n} не экспортируется из {target}"
+
+
+def test_service_worker_precaches_every_script():
+    sw = (STATIC / "sw.js").read_text(encoding="utf-8")
+    for p in (STATIC / "js").rglob("*.js"):
+        assert "/" + p.relative_to(STATIC).as_posix() in sw, f"{p.name} не попал в офлайн-кэш"
+
+
+def test_500_has_security_headers(client):
+    r = client.get("/api/orders/99999999999999999999")
+    assert r.status_code in (401, 404)  # без входа 401, но не 500

@@ -135,6 +135,15 @@ export function toast(msg, opts = {}) {
 
 // ------------------------------------------------------------------ шторки ----
 const stack = [];
+let lastFocus = null;
+
+// Пока открыта шторка, остальное приложение недоступно для Tab и экранных читалок
+function setBackdropInert(on) {
+  for (const id of ['app', 'tabbar']) {
+    const el = document.getElementById(id);
+    if (el) el.inert = on;
+  }
+}
 let pendingBack = false; // кнопка «назад» закрывает шторку, а не приложение
 
 
@@ -145,7 +154,9 @@ export function openSheet(content, { onClose, wide = false } = {}) {
   if (!veil.hidden) stack.pop()?.onClose?.(); // новая шторка поверх открытой заменяет её
   paint(sheet, html`<div class="grab"></div>${content}`);
   sheet.classList.toggle('wide', wide);
+  if (veil.hidden) lastFocus = document.activeElement;
   veil.hidden = false;
+  setBackdropInert(true);
   document.body.style.overflow = 'hidden';
   sheet.scrollTop = 0;
   if (!pendingBack && !history.state?.sheet) history.pushState({ sheet: 1 }, '');
@@ -166,7 +177,9 @@ export function closeSheet({ fromPop = false } = {}) {
   const veil = document.getElementById('veil');
   if (veil.hidden) return;
   veil.hidden = true;
+  setBackdropInert(false);
   document.body.style.overflow = '';
+  if (lastFocus && document.contains(lastFocus)) lastFocus.focus?.({ preventScroll: true });
   const top = stack.pop();
   paint(document.getElementById('sheet'), '');
   if (!fromPop && history.state?.sheet) {

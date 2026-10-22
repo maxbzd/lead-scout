@@ -127,11 +127,13 @@ function defaultPrice(o) {
 async function loadDraft({ force = false } = {}) {
   const ta = $('#draft');
   if (!D || !ta) return;
-  D.busy = true;
+  const mine = D;
+  const seq = (mine.seq = (mine.seq || 0) + 1);
+  mine.busy = true;
   ta.classList.add('busy');
   try {
-    const r = await post(`/orders/${D.o.id}/draft`, { tone: D.tone, variant: D.variant, price: D.price ?? undefined, force });
-    if (!D) return;
+    const r = await post(`/orders/${mine.o.id}/draft`, { tone: mine.tone, variant: mine.variant, price: mine.price ?? undefined, force });
+    if (D !== mine || seq !== mine.seq) return; // пока ждали, закрыли заказ или выбрали другой тон: старый ответ не нужен
     D.text = r.text;
     if (r.price != null) D.price = r.price;
     ta.value = r.text;
@@ -141,8 +143,7 @@ async function loadDraft({ force = false } = {}) {
   } catch (e) {
     toast(e.message);
   } finally {
-    if (D) D.busy = false;
-    ta.classList.remove('busy');
+    if (D === mine && seq === mine.seq) { mine.busy = false; ta.classList.remove('busy'); }
   }
 }
 
@@ -195,6 +196,29 @@ export async function chooseReason(id, code) {
 }
 
 // ------------------------------------------------------------- действия ----
+async function sendOffer() {
+  const o = D.o;
+  const text = $('#draft')?.value || D.text;
+  const url = o.contact?.url || o.message_link;
+  const copied = copyText(text); // сразу, пока длится нажатие
+  const opened = o.contact?.url ? openLink(url) : false;
+  const ok = await copied;
+  try {
+    const r = await post(`/orders/${o.id}/offer`, { done: true, price: D.price || undefined });
+    syncCard(r.order);
+    if (!D || !$('#stages')) return; // заказ успели закрыть
+    $('#stages').hidden = false;
+    paint($('#stages'), stagesBlock(D.o));
+    $('[data-act="cta"]').lastChild.textContent = 'Скопировать ещё раз';
+    paintList();
+    loadFeed().then(paintAll).catch(() => {});
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  toast(ok ? (opened ? 'Текст скопирован. Вставьте его в чате заказчика.' : 'Текст скопирован. Откройте чат с заказчиком и вставьте его.') : 'Не получилось скопировать. Выделите текст и скопируйте вручную.');
+}
+
 export const detailActions = {
   tone: async (el) => {
     if (!D) return;
@@ -208,27 +232,10 @@ export const detailActions = {
     if (!D) return;
     toast((await copyText($('#draft').value)) ? 'Текст скопирован' : 'Не получилось скопировать. Выделите текст и скопируйте вручную.');
   },
-  cta: async () => {
-    if (!D) return;
-    const o = D.o;
-    const text = $('#draft')?.value || D.text;
-    const url = o.contact?.url || o.message_link;
-    const copied = copyText(text); // сразу, пока длится нажатие
-    const opened = o.contact?.url ? openLink(url) : false;
-    const ok = await copied;
-    try {
-      const r = await post(`/orders/${o.id}/offer`, { done: true, price: D.price || undefined });
-      syncCard(r.order);
-      $('#stages').hidden = false;
-      paint($('#stages'), stagesBlock(D.o));
-      $('[data-act="cta"]').lastChild.textContent = 'Скопировать ещё раз';
-      paintList();
-      loadFeed().then(paintAll).catch(() => {});
-    } catch (e) {
-      toast(e.message);
-      return;
-    }
-    toast(ok ? (opened ? 'Текст скопирован. Вставьте его в чате заказчика.' : 'Текст скопирован. Откройте чат с заказчиком и вставьте его.') : 'Не получилось скопировать. Выделите текст и скопируйте вручную.');
+  cta: async (el) => {
+    if (!D || el.dataset.busy) return;
+    el.dataset.busy = '1';
+    try { await sendOffer(); } finally { delete el.dataset.busy; }
   },
   stage: async (el) => {
     if (!D) return;

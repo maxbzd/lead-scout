@@ -61,6 +61,7 @@ async function show(tab, { push = true } = {}) {
   if (tab !== 'feed') $('#sbar').hidden = true;
   if (push && !location.hash.startsWith('#/o/')) history.replaceState(null, '', tab === 'feed' ? location.pathname : `#/${tab}`);
   window.scrollTo(0, 0);
+  if (tab !== 'feed') paint($('#view'), html`<section class="view"><div class="skeleton" style="height:220px;margin-top:14px"></div><div class="skeleton" style="height:120px;margin-top:12px"></div></section>`);
   if (tab === 'feed') {
     renderFeed();
     await refreshFeed({ anim: true });
@@ -92,7 +93,13 @@ function connectStream() {
     handleEvent(ev);
   };
   es.onopen = () => { if (!S.online) { S.online = true; refreshSoft(); } };
-  es.onerror = () => { /* браузер переподключится сам */ };
+  es.onerror = () => {
+    if (es && es.readyState === 2) { // после ответа сервера с ошибкой (например 502 при обновлении) браузер сам не переподключается
+      es.close();
+      es = null;
+      setTimeout(connectStream, 5000);
+    }
+  };
 }
 
 function handleEvent(ev) {
