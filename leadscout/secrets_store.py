@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets as pysecrets
 from pathlib import Path
@@ -16,6 +17,8 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from .config import Settings
 from .db import Database
+
+log = logging.getLogger("leadscout.secrets")
 
 ENV_MAP = {
     "anthropic_key": "anthropic_api_key",
@@ -43,6 +46,7 @@ def load_or_create_key(path: Path) -> bytes:
 
 class Secrets:
     def __init__(self, db: Database, settings: Settings):
+        self._warned: set[str] = set()
         self.db = db
         self.settings = settings
         settings.ensure_dirs()
@@ -71,6 +75,9 @@ class Secrets:
             token = json.loads(raw)
             return self._fernet.decrypt(token.encode("ascii")).decode("utf-8")
         except (InvalidToken, ValueError):
+            if name not in self._warned:
+                self._warned.add(name)
+                log.error("Не удалось расшифровать «%s»: файл secret.key потерян или заменён. Подключите заново.", name)
             return None
 
     def source(self, name: str) -> str:

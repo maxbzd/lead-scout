@@ -54,7 +54,17 @@ class Runtime:
         self._login_started = 0.0
         self._last_maint = 0.0
         self._reconnect_at = 0.0
+        self._bot_retry_at = 0.0
+        self._source_lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task] = set()
         self._sem = asyncio.Semaphore(CONCURRENCY)
+
+    def spawn(self, coro) -> asyncio.Task:
+        """Фоновая задача со ссылкой: иначе Python может собрать её раньше, чем она закончится."""
+        t = asyncio.create_task(coro)
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+        return t
 
     # ------------------------------------------------------------ запуск ----
     async def start(self) -> None:
@@ -185,6 +195,10 @@ class Runtime:
         return bool(self.db.get_setting("demo_enabled", False))
 
     async def build_source(self) -> None:
+        async with self._source_lock:  # два одновременных переподключения оставили бы двух читателей на одной сессии
+            await self._build_source()
+
+    async def _build_source(self) -> None:
         if self.source is not None:
             await self.source.stop()
             self.source = None
@@ -407,9 +421,9 @@ class Runtime:
                     retried = await self.pipeline.retry_stuck()
                     raws = await src.fetch()
                     result["messages"] = len(raws)
-                    ids = await self._ingest(raws)
-                    if retried:
-                        log.info("повторно обработано сообщений: %s", retried)
+                    ids = retried + await self._ingest(raws)  # заказы, дождавшиеся повторной обработки, тоже уведомляют
+                    if hasattr(src, "commit_cursors"):
+                        src.commit_cursors()
                     result["new_ids"], result["orders"] = ids, len(ids)
                     if isinstance(src, TelegramReader) and src.state != "ready":
                         result["error"] = src.error
@@ -441,24 +455,43 @@ class Runtime:
     async def _loop(self) -> None:
         await asyncio.sleep(2)
         while True:
-            try:
-                due = (time.monotonic() - self._last_scan_mono) >= self.settings.scan_minutes * 60
-                await self._reconnect_telegram()
-                if self.source is not None and due:
-                    await self.scan()
-                now = datetime.now(UTC)
-                if self.notifier.digest_due(now):
-                    await self.notifier.send_digest(now)
-                if self.notifier.weekly_due(now):
-                    await self.notifier.send_weekly(now)
-                await self.notifier.flush_queue(now)
-                await self.pipeline.upgrade_with_ai()
-                await self._maintenance()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("scheduler step failed")
+            now = datetime.now(UTC)
+            due = (time.monotonic() - self._last_scan_mono) >= self.settings.scan_minutes * 60
+            steps = [
+                ("reconnect_telegram", self._reconnect_telegram()),
+                ("reconnect_bot", self._reconnect_bot()),
+                ("scan", self.scan() if self.source is not None and due else None),
+                ("digest", self.notifier.send_digest(now) if self.notifier.digest_due(now) else None),
+                ("weekly", self.notifier.send_weekly(now) if self.notifier.weekly_due(now) else None),
+                ("flush", self.notifier.flush_queue(now)),
+                ("retry", self.notifier.retry_failed(now)),
+                ("upgrade", self.pipeline.upgrade_with_ai()),
+                ("maintenance", self._maintenance()),
+            ]
+            for name, coro in steps:  # сбой одного шага не должен останавливать остальные
+                if coro is None:
+                    continue
+                try:
+                    await coro
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("scheduler step %s failed", name)
             await asyncio.sleep(20)
+
+    async def _reconnect_bot(self) -> None:
+        """Бот не поднялся при запуске (нет сети): пробуем снова раз в несколько минут, кроме случая неверного токена."""
+        if self.bot is not None or not self.secrets.get("bot_token") or not self.bot_error or "Токен" in self.bot_error:
+            self._bot_retry_at = 0.0
+            return
+        now = time.monotonic()
+        if not self._bot_retry_at:
+            self._bot_retry_at = now + 120
+            return
+        if now >= self._bot_retry_at:
+            self._bot_retry_at = 0.0
+            await self.build_bot()
+            self.bus.publish({"type": "status"})
 
     async def _reconnect_telegram(self) -> None:
         """Telegram не ответил при запуске (нет сети, перезагрузка сервера): пробуем снова раз в несколько минут."""
