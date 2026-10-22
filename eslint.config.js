@@ -9,7 +9,7 @@ export default [
         window: 'readonly', document: 'readonly', navigator: 'readonly', location: 'readonly', history: 'readonly',
         localStorage: 'readonly', fetch: 'readonly', EventSource: 'readonly', URL: 'readonly', URLSearchParams: 'readonly',
         Intl: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
-        console: 'readonly', self: 'readonly', caches: 'readonly', Promise: 'readonly',
+        console: 'readonly', self: 'readonly', caches: 'readonly', Promise: 'readonly', AbortSignal: 'readonly',
       },
     },
     rules: {
