@@ -33,6 +33,7 @@ function firstStep(kind) {
     if (st.bot.state === 'ready') return st.bot.paired ? 'bot-done' : 'pair';
     return 'bot-token';
   }
+  if (kind === 'cloud') return st.cloud?.connected ? 'cloud-done' : 'cloud-form';
   return st.llm.mode !== 'rules' ? 'ai-done' : 'ai-pick';
 }
 
@@ -130,6 +131,26 @@ function view() {
       return html`${sheetHead('Бот подключён')}
         <div class="okbox">${I.check}<div><b>@${b.username}</b><p>Присылает свежие заказы, утреннюю сводку и принимает ваши оценки кнопками. Команды: /digest, /stats, /chats, /add, /pause.</p></div></div>
         <div class="btnrow">${b.pair_link ? '' : html`<a class="btn" href="https://t.me/${b.username}" target="_blank" rel="noopener noreferrer">Открыть бота</a>`}${b.source === 'app' ? html`<button class="btn danger" type="button" data-act="bot-off">Отключить</button>` : html`<button class="btn" type="button" data-act="close">Готово</button>`}</div>`;
+    }
+    case 'cloud-form':
+      return html`${sheetHead('Облачный сайт')}
+        <p class="lead-p">Свой сайт, который открывается с телефона из любого места. Заказы и ваши оценки хранятся в облаке, а читает чаты и думает эта программа на компьютере.</p>
+        <ol class="howto">
+          <li>Разверните облако по инструкции <b>docs/ЗАПУСК.md</b>, раздел про облачный сайт (это один раз, бесплатно).</li>
+          <li>Вставьте адрес сайта вида <b>https://scout.имя.workers.dev</b>.</li>
+          <li>Вставьте ключ синхронизации: тот же, что вы задали в облаке под именем <b>SYNC_TOKEN</b>.</li>
+        </ol>
+        ${field('cloud-url', 'Адрес сайта', { ph: 'https://scout.ваше-имя.workers.dev', auto: true })}
+        ${field('cloud-token', 'Ключ синхронизации', { type: 'password' })}
+        ${err()}
+        <div class="btnrow one"><button class="btn pri" type="button" data-act="cloud-go" ${busyAttr()}>Подключить</button></div>
+        <p class="mono note-sm">Пока программа на компьютере закрыта, сайт показывает последние данные, а ваши действия ждут в очереди.</p>`;
+    case 'cloud-done': {
+      const cl = st.cloud;
+      return html`${sheetHead('Облачный сайт подключён')}
+        <div class="okbox">${I.check}<div><b>${cl.url}</b><p>${cl.error ? cl.error : cl.last_ok ? 'Данные отправлены. Действия с сайта выполняются, пока эта программа открыта.' : 'Отправляю первые данные…'}</p></div></div>
+        ${cl.source === 'env' ? html`<p class="capnote">Адрес задан в файле .env, поэтому отключить его отсюда нельзя.</p>` : ''}
+        <div class="btnrow"><a class="btn pri" href="${cl.url}" target="_blank" rel="noopener noreferrer">Открыть сайт</a>${cl.source === 'env' ? html`<button class="btn" type="button" data-act="close">Готово</button>` : html`<button class="btn danger" type="button" data-act="cloud-off">Отключить</button>`}</div>`;
     }
     case 'ai-pick':
       return html`${sheetHead('ИИ-режим')}
@@ -292,6 +313,17 @@ export const connectActions = {
     await loadStatus();
     toast('Claude подключён');
     rerender('ai-done');
+  }),
+  'cloud-go': () => run(async () => {
+    await post('/connect/cloud', { url: val('cloud-url'), token: val('cloud-token') });
+    await loadStatus();
+    toast('Облако подключено. Отправляю данные.');
+    rerender('cloud-done');
+  }),
+  'cloud-off': () => run(async () => {
+    await del('/connect/cloud');
+    await loadStatus();
+    rerender('cloud-form');
   }),
   'ai-pause': () => run(async () => { await setAiControl({ paused: !S.status.llm.control.paused }); rerender('ai-done'); }),
   'ai-auto': () => run(async () => { await setAiControl({ auto: !S.status.llm.control.auto }); rerender('ai-done'); }),

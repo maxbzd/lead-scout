@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import learning, present, stats, store
 from ..bot import BotError
+from ..cloud import CloudError
 from ..llm.base import LLMUnavailable
 from ..llm.openai_compat import PROVIDERS
 from ..profile import (
@@ -319,6 +320,7 @@ def status(request: Request) -> dict:
         "tz": profile.tz,
         "public_url": rt.settings.public_url,
         "local": rt.settings.local,
+        "cloud": rt.cloud.status(),
     }
 
 
@@ -650,6 +652,26 @@ async def disconnect_bot(request: Request) -> dict:
     return {"bot": rt.bot_status()}
 
 
+class CloudIn(BaseModel):
+    url: str = Field(min_length=8, max_length=300)
+    token: str = Field(min_length=16, max_length=200)
+
+
+@router.post("/connect/cloud")
+async def connect_cloud(body: CloudIn, request: Request) -> dict:
+    rt = rt_of(request)
+    await rt.cloud.connect(body.url, body.token)
+    rt.bus.publish({"type": "status"})
+    return {"cloud": rt.cloud.status()}
+
+
+@router.delete("/connect/cloud")
+def disconnect_cloud(request: Request) -> dict:
+    rt = rt_of(request)
+    rt.cloud.disconnect()
+    return {"cloud": rt.cloud.status()}
+
+
 class DemoIn(BaseModel):
     on: bool
 
@@ -663,4 +685,4 @@ async def demo(body: DemoIn, request: Request) -> dict:
     return {"demo": rt.demo_enabled()}
 
 
-HUMAN_ERRORS = (LoginError, TelegramProblem, BotError, LLMUnavailable)
+HUMAN_ERRORS = (LoginError, TelegramProblem, BotError, LLMUnavailable, CloudError)

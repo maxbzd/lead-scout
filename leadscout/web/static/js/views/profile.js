@@ -34,7 +34,8 @@ export async function renderProfile() {
     loadStatus().then(() => paintReady()).catch(() => {});
   }
   const p = S.profile;
-  const demoToggle = S.status.telegram.state !== 'ready';
+  const hosted = !!S.status.cloud?.hosted;
+  const demoToggle = !hosted && S.status.telegram.state !== 'ready';
   paint(view, html`<section class="view"><div class="set" style="margin-top:14px">
     <div class="glass" id="ready"></div>
 
@@ -74,7 +75,7 @@ export async function renderProfile() {
     <div class="glass">
       <div class="card-head"><div class="mono">чаты</div></div>
       <p class="capnote" id="chats-note"></p>
-      <button class="btn" style="width:100%;margin-top:10px" type="button" data-act="open-chats">Управлять чатами</button>
+      ${hosted ? '' : html`<button class="btn" style="width:100%;margin-top:10px" type="button" data-act="open-chats">Управлять чатами</button>`}
       <div class="mono" style="margin-top:14px">как часто проверять</div>
       <div class="seg" id="scan-seg" style="margin:8px 0 0"></div>
       <p class="capnote" style="margin-top:8px">Реже проверка, меньше нагрузка и расход ИИ. Сообщения не теряются: бот каждый раз читает всё накопленное.</p>
@@ -118,7 +119,8 @@ function paintReady() {
   const items = S.status.ready;
   const done = items.filter((i) => i.ok).length;
   const pct = Math.round((done / items.length) * 100);
-  const action = { chats: 'open-chats', cases: 'case-add', telegram: 'connect-tg', bot: 'connect-bot', ai: 'connect-ai' };
+  const hosted = !!S.status.cloud?.hosted;
+  const action = hosted ? { cases: 'case-add' } : { chats: 'open-chats', cases: 'case-add', telegram: 'connect-tg', bot: 'connect-bot', ai: 'connect-ai' };
   const btn = { chats: 'Выбрать', cases: 'Добавить', telegram: 'Подключить', bot: 'Подключить', ai: 'Включить' };
   const title = done === items.length ? 'Бот готов к работе' : S.status.demo ? 'Демо-режим' : 'Бот почти готов';
   paint(el, html`<div class="ready"><div>${ring(pct, 72, 6)}</div><div><div class="mono">${done} из ${items.length}</div><h3 class="ready-t">${title}</h3></div></div>
@@ -219,7 +221,16 @@ function paintNotif() {
 }
 
 function connRow(id, label, state, sub, ok) {
-  return html`<div class="sw-row"><div><div class="t">${label} <span class="st ${ok ? 'ok' : 'off'}">${state}</span></div><div class="s">${sub}</div></div><button class="btn small" type="button" data-act="connect-${id}">${ok ? 'Настроить' : 'Подключить'}</button></div>`;
+  const hosted = !!S.status?.cloud?.hosted;
+  const btn = hosted ? '' : html`<button class="btn small" type="button" data-act="connect-${id}">${ok ? 'Настроить' : 'Подключить'}</button>`;
+  return html`<div class="sw-row"><div><div class="t">${label} <span class="st ${ok ? 'ok' : 'off'}">${state}</span></div><div class="s">${sub}</div></div>${btn}</div>`;
+}
+
+function cloudRow(c) {
+  const ok = !!c?.connected;
+  const sub = !ok ? 'Свой сайт с телефона: данные хранятся в облаке, читает и думает этот компьютер'
+    : c.error ? c.error : c.last_ok ? `${c.url.replace(/^https?:\/\//, '')} · обновлено ${new Date(c.last_ok).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : 'Подключаюсь…';
+  return connRow('cloud', 'Облачный сайт', ok ? (c.error ? 'ошибка' : 'подключён') : 'не подключён', sub, ok && !c.error);
 }
 
 export function paintConns() {
@@ -238,6 +249,8 @@ export function paintConns() {
     connRow('tg', 'Telegram', tgOk ? 'подключён' : tg.state === 'demo' ? 'демо' : 'не подключён', tgSub, tgOk),
     connRow('bot', 'Бот', b.state === 'ready' && b.paired ? 'подключён' : b.state === 'ready' ? 'ждёт Start' : 'не подключён', bSub, b.state === 'ready' && b.paired),
     connRow('ai', 'ИИ', l.mode === 'rules' ? 'выключен' : l.control && !l.control.active ? 'на паузе' : 'включён', lSub, l.mode !== 'rules'),
+    st.local ? cloudRow(st.cloud) : '',
+    st.cloud?.hosted ? html`<p class="capnote">Telegram, бот и ИИ подключаются в программе на компьютере. Здесь они только показаны.</p>` : '',
     l.control ? html`<div class="sw-row"><div><div class="t">Пауза ИИ</div><div class="s">${l.control.reason === 'backlog' ? `Включилась сама: неразобранных ${l.control.backlog}` : 'Не тратить запросы, пока вы разбираете заказы'}</div></div><button class="sw" role="switch" aria-checked="${!l.control.active}" data-act="ai-pause-quick" aria-label="Пауза ИИ"></button></div>` : '',
   ]);
 }
@@ -390,6 +403,7 @@ export const profileActions = {
   'connect-tg': () => openConnect('telegram'),
   'connect-bot': () => openConnect('bot'),
   'connect-ai': () => openConnect('claude'),
+  'connect-cloud': () => openConnect('cloud'),
   'demo-toggle': async () => {
     try {
       await post('/demo', { on: !S.status.demo });

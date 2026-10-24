@@ -1,0 +1,17 @@
+{
+  "name": "scout-cloud",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Облачная часть Scout: сайт и база на Cloudflare. Читает и считает программа на вашем компьютере, а сюда отправляет результаты.",
+  "type": "module",
+  "scripts": {
+    "prepare": "node scripts/prepare.mjs",
+    "dev": "node scripts/prepare.mjs && wrangler dev",
+    "deploy": "node scripts/prepare.mjs && wrangler deploy",
+    "test": "node --test test/worker.test.js test/setup.test.js",
+    "setup": "node scripts/setup.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.152.0"
+  }
+}

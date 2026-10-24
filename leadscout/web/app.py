@@ -42,6 +42,7 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.last_request = time.monotonic()
     app.state.auth = Auth(password, rt.secrets.signing_key(), rt.db)
+    rt.app = app  # облачной синхронизации нужен вход в собственный API программы
 
     app.include_router(public)
     app.include_router(router)
@@ -61,7 +62,8 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
-        app.state.last_request = time.monotonic()
+        if request.headers.get("x-scout-internal") != "1":
+            app.state.last_request = time.monotonic()  # служебные запросы синхронизации не считаются «окно ещё открыто»
         if settings.local:
             # приложение для одного компьютера: чужие сайты не должны достучаться до него через подмену адреса (DNS rebinding)
             host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
