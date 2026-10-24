@@ -10,3 +10,8 @@ data/*
 *.egg-info/
 build/
 dist/
+cloud/node_modules/
+cloud/public/
+cloud/.wrangler/
+cloud/.dev.vars
+cloud/.scout-secrets.json

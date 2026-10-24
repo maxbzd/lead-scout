@@ -57,6 +57,9 @@ class Settings:
     bot_token: str = ""
     owner_id: int = 0
 
+    cloud_url: str = ""  # адрес облачного сайта (Cloudflare), если он есть
+    cloud_token: str = ""
+
     scan_minutes: int = 10
     usd_rub: float = 95.0
     eur_rub: float = 105.0
@@ -94,6 +97,8 @@ class Settings:
             telegram_session=os.environ.get("TELEGRAM_SESSION", "").strip(),
             bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
             owner_id=_int("TELEGRAM_OWNER_ID", 0),
+            cloud_url=os.environ.get("LS_CLOUD_URL", "").strip().rstrip("/"),
+            cloud_token=os.environ.get("LS_CLOUD_TOKEN", "").strip(),
             scan_minutes=max(2, _int("LS_SCAN_MINUTES", 10)),
             usd_rub=float(os.environ.get("LS_USD_RUB", "95") or 95),
             eur_rub=float(os.environ.get("LS_EUR_RUB", "105") or 105),

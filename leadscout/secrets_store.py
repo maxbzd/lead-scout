@@ -28,6 +28,7 @@ ENV_MAP = {
     "tg_session": "telegram_session",
     "bot_token": "bot_token",
     "owner_id": "owner_id",
+    "cloud_token": "cloud_token",
 }
 
 

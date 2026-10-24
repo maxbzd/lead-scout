@@ -1,5 +1,5 @@
 // Офлайн-оболочка: страницы, стили и скрипты открываются без сети. Данные (API) всегда берутся с сервера.
-const VERSION = 'scout-v2'; // при изменении приложения меняем номер: старый кэш сбрасывается
+const VERSION = 'scout-v3'; // при изменении приложения меняем номер: старый кэш сбрасывается
 const SHELL = [
   '/', '/app.css', '/fonts/fonts.css', '/manifest.webmanifest', '/icons/favicon.svg',
   '/js/main.js', '/js/api.js', '/js/state.js', '/js/ui.js',

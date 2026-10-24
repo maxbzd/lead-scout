@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from . import ai_control, learning, store
 from .bot import BotApi, BotError, BotService
+from .cloud import CloudSync
 from .config import Settings
 from .db import Database
 from .events import EventBus
@@ -59,6 +60,8 @@ class Runtime:
         self._tasks: set[asyncio.Task] = set()
         self.sse_clients = 0
         self._sem = asyncio.Semaphore(CONCURRENCY)
+        self.app = None  # веб-приложение: ставится при сборке, нужно облачной синхронизации
+        self.cloud = CloudSync(self)
 
     SCAN_CHOICES = (10, 30, 60, 120, 360)
 
@@ -111,6 +114,7 @@ class Runtime:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+        await self.cloud.shutdown()
         if self.source:
             await self.source.stop()
         if self.bot:
@@ -507,6 +511,7 @@ class Runtime:
                 ("retry", self.notifier.retry_failed(now)),
                 ("upgrade", self.pipeline.upgrade_with_ai() if not manual else None),  # при ручной проверке ИИ работает сразу после неё
                 ("maintenance", self._maintenance()),
+                ("cloud", self.cloud.cycle() if self.app is not None else None),
             ]
             for name, coro in steps:  # сбой одного шага не должен останавливать остальные
                 if coro is None:
