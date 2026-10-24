@@ -39,12 +39,22 @@ function paintBanners() {
   const st = S.status;
   const out = [];
   if (!S.online) out.push(html`<div class="banner warn">${I.alert}<span>Нет связи. Показываю то, что сохранилось на телефоне.</span></div>`);
+  const cl = st?.cloud;
+  if (cl?.hosted) {
+    const at = cl.last_sync ? new Date(cl.last_sync) : null;
+    const when = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : null;
+    if (!cl.last_sync) out.push(html`<div class="banner warn">${I.alert}<span>Компьютер ещё не присылал данных. Запустите программу Scout на компьютере.</span></div>`);
+    else if (!cl.online) out.push(html`<div class="banner warn">${I.alert}<span><b>Компьютер не в сети.</b> Данные на ${when}.${cl.pending ? ` Ваших действий в очереди: ${cl.pending}, они выполнятся при запуске программы.` : ' Оценки и закладки сохранятся и дойдут до него позже.'}</span></div>`);
+    else if (cl.pending) out.push(html`<div class="banner"><span class="b-dot"></span><span>Передаю на компьютер: ${cl.pending}</span></div>`);
+  }
   const ai = st?.llm;
   if (ai && ai.mode !== 'rules' && ai.control && !ai.control.active) {
     const manual = ai.control.reason === 'manual';
     out.push(html`<div class="banner"><span class="b-dot"></span><span><b>ИИ на паузе.</b> ${manual ? 'Вы поставили её вручную.' : `Накопилось ${ai.control.backlog} неразобранных заказов, разберите их.`} Оценивает бесплатно правилами.</span><button type="button" data-act="ai-resume">${manual ? 'Включить' : 'Всё равно включить'}</button></div>`);
   }
-  if (st?.demo) {
+  if (cl?.hosted) {
+    // подключения на сайте только показываем: менять их можно в программе на компьютере
+  } else if (st?.demo) {
     out.push(html`<div class="banner"><span class="b-dot"></span><span><b>Демо.</b> Заказы тестовые.</span><button type="button" data-act="connect-tg">Подключить Telegram</button></div>`);
   } else if (st && st.telegram.state !== 'ready') {
     const msg = st.telegram.state === 'unauthorized' ? 'Telegram разлогинил аккаунт. Войдите заново.' : st.telegram.error || 'Бот пока не читает ваши чаты.';
@@ -188,7 +198,8 @@ export async function runScan() {
   if (pill) pill.textContent = 'сканирую…';
   try {
     const r = await post('/scan');
-    if (r.skipped) toast('Проверка уже идёт');
+    if (r.queued) toast('Команда ушла на компьютер. Он проверит чаты, как только программа запущена.');
+    else if (r.skipped) toast('Проверка уже идёт');
     else if (r.error) toast(r.error);
     else if (r.orders) toast(`Нашёл новых: ${r.orders}`);
     else toast('Новых заказов нет');
@@ -286,7 +297,8 @@ export const feedActions = {
     el.disabled = true;
     try {
       const r = await post(`/discarded/${el.dataset.id}/promote`);
-      toast('Добавил в ленту. Оцените его: так бот научится.', { action: 'Открыть', onAction: () => openOrder(r.order.id) });
+      if (r.queued) toast('Принял. Заказ появится в ленте, когда компьютер обработает команду.');
+      else toast('Добавил в ленту. Оцените его: так бот научится.', { action: 'Открыть', onAction: () => openOrder(r.order.id) });
       await refreshFeed();
     } catch (e) {
       toast(e.message);

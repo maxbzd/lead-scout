@@ -45,7 +45,7 @@ def run_local(settings: Settings) -> int:
         while not server.should_exit:
             await asyncio.sleep(float(os.environ.get("LS_QUIT_CHECK", 10)))
             rt = app.state.rt
-            busy = rt.scanning or bool(rt._tasks)
+            busy = rt.scanning or bool(rt._tasks) or rt.cloud.enabled  # с облачным сайтом программа ждёт ваших действий с телефона
             if should_quit(time.monotonic(), started, app.state.last_request, rt.sse_clients, busy,
                            grace=float(os.environ.get("LS_QUIT_GRACE", 120)), idle=float(os.environ.get("LS_QUIT_IDLE", 90))):
                 print("Окно закрыто, останавливаюсь. До встречи!", flush=True)
@@ -59,7 +59,7 @@ def run_local(settings: Settings) -> int:
             watcher.cancel()
 
     print(f"\n  Scout запущен: {url}\n  Данные хранятся в {settings.data_dir}\n"
-          "  Закройте окно приложения, и программа остановится сама (или нажмите Ctrl+C).\n", flush=True)
+          "  Закройте окно приложения, и программа остановится сама (или нажмите Ctrl+C).\n  Если подключён облачный сайт, программа работает, пока открыто это чёрное окно.\n", flush=True)
     threading.Timer(1.5, webbrowser.open, [url]).start()
     asyncio.run(serve())
     return 0
