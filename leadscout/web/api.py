@@ -509,6 +509,17 @@ def disconnect_claude(request: Request) -> dict:
     return {"llm": rt.llm_status()}
 
 
+class ScanIn(BaseModel):
+    minutes: int = Field(ge=5, le=1440)
+
+
+@router.put("/settings/scan")
+def set_scan(body: ScanIn, request: Request) -> dict:
+    rt = rt_of(request)
+    rt.set_scan_minutes(body.minutes)
+    return {"scan": rt.scan_status()}
+
+
 class AiControlIn(BaseModel):
     paused: bool | None = None
     auto: bool | None = None

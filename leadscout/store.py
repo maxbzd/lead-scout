@@ -322,10 +322,11 @@ def purge_old(db: Database, days: int = 60) -> int:
     db.run(  # одним запросом: построчное удаление держало бы работу приложения секундами
         "DELETE FROM messages WHERE id IN (SELECT o.message_id FROM orders o WHERE o.posted_at<? AND o.feedback IS NULL "
         "AND o.stage IS NULL AND o.state NOT IN ('saved') AND o.offered_at IS NULL)", (cutoff,))
+    # болтовня, повторы и ответы нужны только неделю («Отброшено» показывает последние 7 дней), иначе база пухнет от оживлённых чатов
     db.run(
         "DELETE FROM messages WHERE posted_at<? AND status IN ('noise','reply','new','dup') "
         "AND id NOT IN (SELECT message_id FROM orders)",
-        (cutoff,),
+        (iso(now_utc() - timedelta(days=DISCARDED_DAYS + 1)),),
     )
     return n
 

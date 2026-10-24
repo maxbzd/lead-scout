@@ -59,6 +59,24 @@ class Runtime:
         self._tasks: set[asyncio.Task] = set()
         self._sem = asyncio.Semaphore(CONCURRENCY)
 
+    SCAN_CHOICES = (10, 30, 60, 120, 360)
+
+    @property
+    def scan_minutes(self) -> int:
+        """Как часто проверять чаты: выбор в приложении важнее значения из настроек сервера."""
+        v = self.db.get_setting("scan_minutes")
+        return int(v) if isinstance(v, int) and 2 <= v <= 1440 else self.settings.scan_minutes
+
+    def set_scan_minutes(self, minutes: int) -> None:
+        self.db.set_setting("scan_minutes", int(minutes))
+        self._apply_live()
+        self.bus.publish({"type": "status"})
+
+    def _apply_live(self) -> None:
+        """При редких проверках живое чтение не нужно: все сообщения разберёт ближайшая проверка (так же, но пачкой)."""
+        if isinstance(self.source, TelegramReader):
+            self.source.live = self.scan_minutes <= 15
+
     def spawn(self, coro) -> asyncio.Task:
         """Фоновая задача со ссылкой: иначе Python может собрать её раньше, чем она закончится."""
         t = asyncio.create_task(coro)
@@ -207,6 +225,7 @@ class Runtime:
             self.purge_demo()
             reader = TelegramReader(self.db, *creds)
             reader.listener = self.ingest_one
+            reader.live = self.scan_minutes <= 15
             try:
                 await asyncio.wait_for(reader.start(), START_TIMEOUT)  # без связи с Telegram приложение всё равно открывается
             except TimeoutError:
@@ -448,15 +467,15 @@ class Runtime:
         nxt = None
         if self.settings.run_worker and self.source is not None:
             elapsed = time.monotonic() - self._last_scan_mono if self._last_scan_mono else 0
-            nxt = max(0, int(self.settings.scan_minutes * 60 - elapsed))
-        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.settings.scan_minutes}
+            nxt = max(0, int(self.scan_minutes * 60 - elapsed))
+        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes}
 
     # ---------------------------------------------------- расписание ----
     async def _loop(self) -> None:
         await asyncio.sleep(2)
         while True:
             now = datetime.now(UTC)
-            due = (time.monotonic() - self._last_scan_mono) >= self.settings.scan_minutes * 60
+            due = (time.monotonic() - self._last_scan_mono) >= self.scan_minutes * 60
             steps = [
                 ("reconnect_telegram", self._reconnect_telegram()),
                 ("reconnect_bot", self._reconnect_bot()),

@@ -75,6 +75,9 @@ export async function renderProfile() {
       <div class="card-head"><div class="mono">чаты</div></div>
       <p class="capnote" id="chats-note"></p>
       <button class="btn" style="width:100%;margin-top:10px" type="button" data-act="open-chats">Управлять чатами</button>
+      <div class="mono" style="margin-top:14px">как часто проверять</div>
+      <div class="seg" id="scan-seg" style="margin:8px 0 0"></div>
+      <p class="capnote" style="margin-top:8px">Реже проверка, меньше нагрузка и расход ИИ. Сообщения не теряются: бот каждый раз читает всё накопленное.</p>
     </div>
 
     <div class="glass" id="notif"></div>
@@ -105,6 +108,7 @@ export async function renderProfile() {
   paintConns();
   paintInstall();
   paintChatsNote();
+  paintScanSeg();
 }
 
 // ------------------------------------------------------------ готовность ----
@@ -119,6 +123,17 @@ function paintReady() {
   const title = done === items.length ? 'Бот готов к работе' : S.status.demo ? 'Демо-режим' : 'Бот почти готов';
   paint(el, html`<div class="ready"><div>${ring(pct, 72, 6)}</div><div><div class="mono">${done} из ${items.length}</div><h3 class="ready-t">${title}</h3></div></div>
     <div class="todo">${items.map((i) => html`<div><span class="${i.ok ? 'okc' : 'nc'}">${i.ok ? I.check : I.alert}</span><span>${i.label}</span>${!i.ok && action[i.id] ? html`<button class="mini" type="button" data-act="${action[i.id]}">${btn[i.id]}</button>` : html`<span></span>`}</div>`)}</div>`);
+}
+
+const SCAN_LABELS = { 10: '10 мин', 30: '30 мин', 60: '1 час', 120: '2 часа', 360: '6 часов' };
+
+function paintScanSeg() {
+  const el = $('#scan-seg');
+  if (!el || !S.status) return;
+  const cur = S.status.scan.every_min;
+  const choices = Object.keys(SCAN_LABELS).map(Number);
+  if (!choices.includes(cur)) choices.push(cur);
+  paint(el, choices.sort((a, b) => a - b).map((m) => raw(`<button type="button" data-act="scan-every" data-v="${m}" aria-pressed="${m === cur}">${esc(SCAN_LABELS[m] || `${m} мин`)}</button>`)));
 }
 
 function paintChatsNote() {
@@ -294,6 +309,15 @@ export const profileActions = {
       await setAiControl(c.reason === 'backlog' ? { auto: false } : { paused: !c.paused });
       paintConns();
       toast(S.status.llm.control.active ? 'ИИ снова работает' : 'ИИ на паузе: расходов нет');
+    } catch (e) { toast(e.message); }
+  },
+  'scan-every': async (el) => {
+    try {
+      const r = await put('/settings/scan', { minutes: +el.dataset.v });
+      S.status.scan = { ...S.status.scan, ...r.scan };
+      paintScanSeg();
+      paintChatsNote();
+      toast(`Проверяю чаты каждые ${SCAN_LABELS[+el.dataset.v] || el.dataset.v + ' мин'}`);
     } catch (e) { toast(e.message); }
   },
   'recall-toggle': (el) => {

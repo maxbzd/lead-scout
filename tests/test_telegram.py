@@ -329,3 +329,47 @@ async def test_empty_login_code_is_rejected():
     login.client = object()
     with pytest.raises(tg.LoginError, match="цифрами"):
         await login.sign_in_code("abc")
+
+
+async def test_busy_chat_is_read_in_pages_without_losing_messages(db):
+    row = chat_row(db)
+    db.run("UPDATE chats SET last_msg_id=10, last_scan_at=? WHERE id=?", (iso(datetime.now(UTC)), row["id"]))
+    row = db.one("SELECT * FROM chats WHERE id=?", (row["id"],))
+    many = [msg(i, f"сообщение {i} про бота", 3) for i in range(11, 2611)]  # 2600 новых за один интервал
+    r = reader(db, FakeClient(many))
+    out = await r._fetch_chat(row)
+    assert len(out) == 2600 and r.seen[row["id"]] == 2610
+
+
+def test_scan_interval_is_adjustable_and_switches_live_reading(authed):
+    from leadscout.sources.telegram import TelegramReader
+
+    rt = authed.app.state.rt
+    assert authed.get("/api/status").json()["scan"]["every_min"] == rt.settings.scan_minutes
+    r = authed.put("/api/settings/scan", json={"minutes": 120}, headers={"X-Requested-With": "leadscout"})
+    assert r.status_code == 200 and r.json()["scan"]["every_min"] == 120
+    assert authed.get("/api/status").json()["scan"]["every_min"] == 120
+    assert authed.put("/api/settings/scan", json={"minutes": 1}, headers={"X-Requested-With": "leadscout"}).status_code == 422
+    rt.source = TelegramReader(rt.db, 1, "h", "s")
+    rt._apply_live()
+    assert rt.source.live is False
+    rt.set_scan_minutes(10)
+    assert rt.source.live is True
+
+
+async def test_live_handler_is_silent_when_checks_are_rare(db):
+    row = chat_row(db)
+    got = []
+
+    async def listener(raw):
+        got.append(raw)
+
+    r = reader(db, FakeClient())
+    r.listener, r._by_tg = listener, {row["tg_id"]: row["id"]}
+    event = SimpleNamespace(chat_id=row["tg_id"], message=msg(1, "Нужен бот, бюджет 20 000 руб", 1))
+    r.live = False
+    await r._on_new(event)
+    assert got == []
+    r.live = True
+    await r._on_new(event)
+    assert len(got) == 1
