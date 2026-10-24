@@ -94,7 +94,7 @@ export async function renderProfile() {
     </div>
 
     <div class="glass" id="install"></div>
-    <button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>
+    ${S.status.local ? '' : html`<button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>`}
     <p class="mono center" style="margin:6px 0 0">Scout 1.0</p>
   </div></section>`);
   paintReady();
@@ -125,7 +125,7 @@ function paintReady() {
     <div class="todo">${items.map((i) => html`<div><span class="${i.ok ? 'okc' : 'nc'}">${i.ok ? I.check : I.alert}</span><span>${i.label}</span>${!i.ok && action[i.id] ? html`<button class="mini" type="button" data-act="${action[i.id]}">${btn[i.id]}</button>` : html`<span></span>`}</div>`)}</div>`);
 }
 
-const SCAN_LABELS = { 10: '10 мин', 30: '30 мин', 60: '1 час', 120: '2 часа', 360: '6 часов' };
+const SCAN_LABELS = { 0: 'Вручную', 10: '10 мин', 30: '30 мин', 60: '1 час', 120: '2 часа', 360: '6 часов' };
 
 function paintScanSeg() {
   const el = $('#scan-seg');
@@ -140,7 +140,9 @@ function paintChatsNote() {
   const el = $('#chats-note');
   if (!el || !S.status) return;
   const on = S.status.ready.find((r) => r.id === 'chats')?.count || 0;
-  el.textContent = on ? `Читаю ${on} ${plural(on, 'чат', 'чата', 'чатов')}. Проверка каждые ${S.status.scan.every_min} мин.` : 'Пока ни одного чата. Без них бот не найдёт заказов.';
+  const every = S.status.scan.every_min;
+  const when = every ? `Проверка каждые ${every} мин.` : 'Проверка только по кнопке «Проверить чаты».';
+  el.textContent = on ? `Читаю ${on} ${plural(on, 'чат', 'чата', 'чатов')}. ${when}` : 'Пока ни одного чата. Без них бот не найдёт заказов.';
 }
 
 // -------------------------------------------------------------- сохранение ----
@@ -317,7 +319,7 @@ export const profileActions = {
       S.status.scan = { ...S.status.scan, ...r.scan };
       paintScanSeg();
       paintChatsNote();
-      toast(`Проверяю чаты каждые ${SCAN_LABELS[+el.dataset.v] || el.dataset.v + ' мин'}`);
+      toast(+el.dataset.v === 0 ? 'Проверка только по вашей кнопке' : `Проверяю чаты каждые ${SCAN_LABELS[+el.dataset.v] || el.dataset.v + ' мин'}`);
     } catch (e) { toast(e.message); }
   },
   'recall-toggle': (el) => {

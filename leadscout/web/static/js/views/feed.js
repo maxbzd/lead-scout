@@ -19,6 +19,7 @@ export function renderFeed() {
       <div id="banners"></div>
       <div class="hero" id="hero"></div>
       <div class="scan"><span class="mono" id="scan-note"></span><div class="bar"><i></i></div></div>
+      <div id="manual-cta"></div>
       <div class="chips" id="filters" role="group" aria-label="Фильтр"></div>
       <div class="sortrow"><span class="mono" id="shown"></span><div class="seg" id="sort" role="group" aria-label="Сортировка"></div></div>
       <div class="list anim" id="list" aria-live="polite"></div>
@@ -75,6 +76,7 @@ function paintHero() {
     </div>
     <div class="orb" aria-hidden="true"><div class="core"></div></div>`);
   const sc = st?.scan;
+  paint($('#manual-cta'), sc && sc.every_min === 0 ? html`<button class="btn pri full" type="button" data-act="scan" style="margin-top:14px">${I.search}${sc.running ? 'Проверяю…' : 'Проверить чаты'}</button>` : '');
   $('#scan-note').textContent = sc?.running ? 'проверяю чаты…' : read ? `прочитано ${read} за неделю` : 'ждёт первой проверки';
 }
 
