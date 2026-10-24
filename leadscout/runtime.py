@@ -57,6 +57,7 @@ class Runtime:
         self._bot_retry_at = 0.0
         self._source_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
+        self.sse_clients = 0
         self._sem = asyncio.Semaphore(CONCURRENCY)
 
     SCAN_CHOICES = (10, 30, 60, 120, 360)
@@ -65,7 +66,13 @@ class Runtime:
     def scan_minutes(self) -> int:
         """Как часто проверять чаты: выбор в приложении важнее значения из настроек сервера."""
         v = self.db.get_setting("scan_minutes")
-        return int(v) if isinstance(v, int) and 2 <= v <= 1440 else self.settings.scan_minutes
+        if isinstance(v, int) and (v == 0 or 2 <= v <= 1440):
+            return v
+        return 0 if self.settings.local else self.settings.scan_minutes  # на своём компьютере по умолчанию проверка по кнопке
+
+    @property
+    def manual(self) -> bool:
+        return self.scan_minutes == 0
 
     def set_scan_minutes(self, minutes: int) -> None:
         self.db.set_setting("scan_minutes", int(minutes))
@@ -75,7 +82,7 @@ class Runtime:
     def _apply_live(self) -> None:
         """При редких проверках живое чтение не нужно: все сообщения разберёт ближайшая проверка (так же, но пачкой)."""
         if isinstance(self.source, TelegramReader):
-            self.source.live = self.scan_minutes <= 15
+            self.source.live = 0 < self.scan_minutes <= 15
 
     def spawn(self, coro) -> asyncio.Task:
         """Фоновая задача со ссылкой: иначе Python может собрать её раньше, чем она закончится."""
@@ -225,7 +232,7 @@ class Runtime:
             self.purge_demo()
             reader = TelegramReader(self.db, *creds)
             reader.listener = self.ingest_one
-            reader.live = self.scan_minutes <= 15
+            reader.live = 0 < self.scan_minutes <= 15
             try:
                 await asyncio.wait_for(reader.start(), START_TIMEOUT)  # без связи с Telegram приложение всё равно открывается
             except TimeoutError:
@@ -457,17 +464,30 @@ class Runtime:
                             (iso(), result["messages"], result["orders"], result["error"], run_id))
                 self.last_scan = {"at": iso(), **{k: v for k, v in result.items() if k != "new_ids"}}
                 self.db.set_setting("last_scan", self.last_scan)
+            if self.manual and self.pipeline.ai_on():
+                self.spawn(self._ai_burst())  # при ручной проверке ИИ уточняет оценки сразу, пока приложение открыто
             self.bus.publish({"type": "scan", "running": False, "orders": result["orders"], "ids": result["new_ids"]})
             if result["new_ids"]:
                 self.bus.publish({"type": "orders", "ids": result["new_ids"]})
             return result
+
+    async def _ai_burst(self) -> None:
+        """Уточнение оценок ИИ подряд, пока есть что уточнять (но не бесконечно)."""
+        done = 0
+        for _ in range(60):
+            n = await self.pipeline.upgrade_with_ai(limit=5)
+            done += n
+            if n == 0:
+                break
+        if done:
+            self.bus.publish({"type": "orders", "ids": []})
 
     def scan_status(self) -> dict:
         last = self.last_scan or self.db.get_setting("last_scan")
         nxt = None
         if self.settings.run_worker and self.source is not None:
             elapsed = time.monotonic() - self._last_scan_mono if self._last_scan_mono else 0
-            nxt = max(0, int(self.scan_minutes * 60 - elapsed))
+            nxt = max(0, int(self.scan_minutes * 60 - elapsed)) if self.scan_minutes else None
         return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes}
 
     # ---------------------------------------------------- расписание ----
@@ -475,16 +495,17 @@ class Runtime:
         await asyncio.sleep(2)
         while True:
             now = datetime.now(UTC)
-            due = (time.monotonic() - self._last_scan_mono) >= self.scan_minutes * 60
+            manual = self.manual
+            due = not manual and (time.monotonic() - self._last_scan_mono) >= self.scan_minutes * 60
             steps = [
                 ("reconnect_telegram", self._reconnect_telegram()),
                 ("reconnect_bot", self._reconnect_bot()),
                 ("scan", self.scan() if self.source is not None and due else None),
-                ("digest", self.notifier.send_digest(now) if self.notifier.digest_due(now) else None),
-                ("weekly", self.notifier.send_weekly(now) if self.notifier.weekly_due(now) else None),
+                ("digest", self.notifier.send_digest(now) if not manual and self.notifier.digest_due(now) else None),
+                ("weekly", self.notifier.send_weekly(now) if not manual and self.notifier.weekly_due(now) else None),
                 ("flush", self.notifier.flush_queue(now)),
                 ("retry", self.notifier.retry_failed(now)),
-                ("upgrade", self.pipeline.upgrade_with_ai()),
+                ("upgrade", self.pipeline.upgrade_with_ai() if not manual else None),  # при ручной проверке ИИ работает сразу после неё
                 ("maintenance", self._maintenance()),
             ]
             for name, coro in steps:  # сбой одного шага не должен останавливать остальные

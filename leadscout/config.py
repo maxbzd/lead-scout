@@ -62,6 +62,7 @@ class Settings:
     eur_rub: float = 105.0
 
     run_worker: bool = True
+    local: bool = False  # режим «приложение на моём компьютере»: только этот компьютер, без пароля, проверка по кнопке
     cookie_secure: bool | None = None
     extra: dict = field(default_factory=dict)
 
@@ -72,10 +73,13 @@ class Settings:
     @classmethod
     def load(cls, env_file: str | None = None) -> Settings:
         _load_dotenv(Path(env_file or ".env"))
-        data_dir = Path(os.environ.get("LS_DATA_DIR", "data"))
+        local = _bool("LS_LOCAL", False)
+        default_dir = str(Path.home() / ".leadscout") if local else "data"  # данные переживают обновление программы
+        data_dir = Path(os.environ.get("LS_DATA_DIR", default_dir))
         s = cls(
             data_dir=data_dir,
-            host=os.environ.get("LS_HOST", "0.0.0.0"),
+            local=local,
+            host=os.environ.get("LS_HOST", "127.0.0.1" if local else "0.0.0.0"),
             port=_int("LS_PORT", 8000),
             public_url=os.environ.get("LS_PUBLIC_URL", "").rstrip("/"),
             password=os.environ.get("LS_PASSWORD", ""),
@@ -109,6 +113,8 @@ class Settings:
 
     def resolve_password(self) -> tuple[str, bool]:
         """Пароль для входа. Если не задан, создаём случайный и храним в data/password.txt."""
+        if self.local:
+            return "local-mode", False  # на своём компьютере пароль не нужен: доступ только с этого компьютера
         if self.password:
             return self.password, False
         self.ensure_dirs()

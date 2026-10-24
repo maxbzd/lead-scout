@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
     app = FastAPI(title="Lead Scout", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.rt = rt
     app.state.settings = settings
+    app.state.last_request = time.monotonic()
     app.state.auth = Auth(password, rt.secrets.signing_key(), rt.db)
 
     app.include_router(public)
@@ -59,6 +61,12 @@ def create_app(settings: Settings, runtime: Runtime | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
+        app.state.last_request = time.monotonic()
+        if settings.local:
+            # приложение для одного компьютера: чужие сайты не должны достучаться до него через подмену адреса (DNS rebinding)
+            host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                return JSONResponse({"detail": "Доступ только с этого компьютера"}, status_code=403)
         resp = await call_next(request)
         resp.headers.setdefault("Content-Security-Policy", CSP)
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")

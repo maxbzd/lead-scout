@@ -455,3 +455,6 @@ html, body { overflow-x: clip; }
 :root { --mute: #9A97BC; }
 .pill, .sw, .todo .mini { min-height: 36px; }
 .sw { height: 30px; }
+
+#scan-seg { flex-wrap: wrap; }
+#scan-seg button { flex: 1 1 30%; }
