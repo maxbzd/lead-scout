@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .. import learning, present, stats, store
 from ..bot import BotError
@@ -77,7 +77,7 @@ def logout(request: Request):
 @public.get("/session")
 def session(request: Request) -> dict:
     auth: Auth = request.app.state.auth
-    return {"authed": auth.valid(request.cookies.get(COOKIE))}
+    return {"authed": request.app.state.settings.local or auth.valid(request.cookies.get(COOKIE))}
 
 
 # ----------------------------------------------------------------- заказы ----
@@ -318,6 +318,7 @@ def status(request: Request) -> dict:
         "ready": ready,
         "tz": profile.tz,
         "public_url": rt.settings.public_url,
+        "local": rt.settings.local,
     }
 
 
@@ -336,16 +337,22 @@ async def stream(request: Request) -> StreamingResponse:
     async def gen():
         yield "retry: 4000\n\n"
         q = rt.bus.open_queue()
+        rt.sse_clients += 1
         try:
+            quiet = 0
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    ev = await asyncio.wait_for(q.get(), timeout=20)
+                    ev = await asyncio.wait_for(q.get(), timeout=5)  # часто проверяем, что окно ещё открыто
+                    quiet = 0
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
                 except TimeoutError:
-                    yield ": ping\n\n"
+                    quiet += 1
+                    if quiet % 4 == 0:
+                        yield ": ping\n\n"
         finally:
+            rt.sse_clients -= 1
             rt.bus.close_queue(q)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
@@ -510,7 +517,14 @@ def disconnect_claude(request: Request) -> dict:
 
 
 class ScanIn(BaseModel):
-    minutes: int = Field(ge=5, le=1440)
+    minutes: int = Field(ge=0, le=1440)  # 0 = только по кнопке
+
+    @field_validator("minutes")
+    @classmethod
+    def _min(cls, v: int) -> int:
+        if 0 < v < 5:
+            raise ValueError("не чаще раза в 5 минут")
+        return v
 
 
 @router.put("/settings/scan")

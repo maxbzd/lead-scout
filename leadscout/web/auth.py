@@ -91,6 +91,8 @@ def client_ip(request: Request) -> str:
 
 
 def require_auth(request: Request) -> None:
+    if request.app.state.settings.local:
+        return
     auth: Auth = request.app.state.auth
     if not auth.valid(request.cookies.get(COOKIE)):
         raise HTTPException(status_code=401, detail="Нужно войти")

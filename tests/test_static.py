@@ -73,3 +73,12 @@ def test_dependency_lock_is_hash_pinned():
     blocks = [b for b in lock.split("\n\n") if "==" in b]
     assert blocks and all("--hash=sha256:" in b for b in blocks)
     assert "litellm" not in lock.lower()
+
+
+def test_launchers_exist_and_point_to_local_mode():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for name in ("start-windows.bat", "start-mac.command", "start-linux.sh"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "leadscout --local" in text and "requirements.lock" in text, name
