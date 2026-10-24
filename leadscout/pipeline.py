@@ -57,6 +57,8 @@ class Pipeline:
         text = (raw.text or "").strip()
         if not text:
             return None
+        if len(ex.squash(text)) < 12:
+            return None  # «+1», «спасибо» и подобное не храним: в оживлённых чатах их большинство
         key = (raw.chat_id, raw.tg_msg_id)
         if key in self._inflight:
             return None  # то же сообщение уже обрабатывается (пришло и вживую, и при проверке)
@@ -360,7 +362,7 @@ class Pipeline:
         profile = load_profile(self.db)
         rows = self.db.all(
             store.ORDER_SELECT + " WHERE o.scored_by='rules' AND o.verdict IN ('match','maybe') AND o.feedback IS NULL "
-            "AND o.stage IS NULL AND o.state!='hidden' AND o.created_at>=? ORDER BY o.id DESC LIMIT ?",
+            "AND o.stage IS NULL AND o.state!='hidden' AND o.created_at>=? ORDER BY o.score DESC, o.id DESC LIMIT ?",
             (iso(now_utc() - timedelta(hours=hours)), limit * 4),
         )
         now = time.monotonic()

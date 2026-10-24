@@ -23,6 +23,7 @@ Listener = Callable[[RawMessage], Awaitable[None]]
 FIRST_SCAN_LIMIT = 500
 FIRST_SCAN_HOURS = 72
 CATCHUP_LIMIT = 1000
+MAX_PAGES = 8  # до 8000 сообщений на чат за одну проверку
 
 AUTH_LOST = (
     errors.AuthKeyUnregisteredError,
@@ -127,6 +128,7 @@ class TelegramReader:
         self._by_tg: dict[int, int] = {}
         self._dialogs_loaded = False
         self._handler = None
+        self.live = True  # разбирать ли новые сообщения сразу; при редких проверках выключено
         self.seen: dict[int, int] = {}  # чат -> самый новый просмотренный id, включая сообщения без текста
 
     # ------------------------------------------------------------ жизнь ----
@@ -175,7 +177,7 @@ class TelegramReader:
     async def _on_new(self, event: Any) -> None:
         try:
             chat_pk = self._by_tg.get(event.chat_id)
-            if chat_pk is None or self.listener is None:
+            if not self.live or chat_pk is None or self.listener is None:
                 return
             row = self.db.one("SELECT * FROM chats WHERE id=?", (chat_pk,))
             if not row:
@@ -253,34 +255,47 @@ class TelegramReader:
         newest = 0
         last = parse_iso(row.get("last_scan_at"))
         stale = (datetime.now(UTC) - last) if last else None
+
+        async def pull(it: Any, horizon: datetime | None = None) -> tuple[int, int]:
+            """Разбираем одну порцию сообщений. Возвращает (сколько просмотрено, самый новый id)."""
+            seen = top = 0
+            async for msg in it:
+                if horizon and msg.date < horizon:
+                    break
+                seen += 1
+                top = max(top, getattr(msg, "id", 0) or 0)
+                if getattr(msg, "action", None) is not None or getattr(msg, "out", False):
+                    continue  # служебные и ваши собственные сообщения не заказы
+                sid = getattr(msg, "sender_id", None)
+                sender = senders.get(sid)
+                if sender is None and sid is not None:
+                    try:
+                        sender = await msg.get_sender()
+                    except Exception:
+                        sender = None
+                    senders[sid] = sender
+                raw = message_to_raw(msg, row, sender)
+                if raw:
+                    out.append(raw)
+            return seen, top
+
         if first:
-            horizon = datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS)
-            it = self.client.iter_messages(ent, limit=FIRST_SCAN_LIMIT)
-        elif stale is not None and stale > timedelta(hours=6):
-            # давно не читали (сервер был выключен): идём от недавнего времени, а не от старого курсора, чтобы свежее не ждало часами
-            start = max(last - timedelta(minutes=10), datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
-            horizon = None
-            it = self.client.iter_messages(ent, offset_date=start, limit=CATCHUP_LIMIT, reverse=True)
+            _, newest = await pull(self.client.iter_messages(ent, limit=FIRST_SCAN_LIMIT),
+                                   datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
         else:
-            horizon = None
-            it = self.client.iter_messages(ent, min_id=row["last_msg_id"], limit=CATCHUP_LIMIT, reverse=True)
-        async for msg in it:
-            if horizon and msg.date < horizon:
-                break
-            newest = max(newest, getattr(msg, "id", 0) or 0)
-            if getattr(msg, "action", None) is not None or getattr(msg, "out", False):
-                continue  # служебные и ваши собственные сообщения не заказы
-            sid = getattr(msg, "sender_id", None)
-            sender = senders.get(sid)
-            if sender is None and sid is not None:
-                try:
-                    sender = await msg.get_sender()
-                except Exception:
-                    sender = None
-                senders[sid] = sender
-            raw = message_to_raw(msg, row, sender)
-            if raw:
-                out.append(raw)
+            if stale is not None and stale > timedelta(hours=12):
+                # давно не читали (сервер был выключен): идём от недавнего времени, а не от старого курсора, чтобы свежее не ждало часами
+                start = max(last - timedelta(minutes=10), datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
+                seen, top = await pull(self.client.iter_messages(ent, offset_date=start, limit=CATCHUP_LIMIT, reverse=True))
+            else:
+                seen, top = await pull(self.client.iter_messages(ent, min_id=row["last_msg_id"], limit=CATCHUP_LIMIT, reverse=True))
+            newest = top
+            # в оживлённых чатах за час набегают тысячи сообщений: читаем следующими порциями, пока не дойдём до конца
+            pages = 1
+            while seen >= CATCHUP_LIMIT and pages < MAX_PAGES and newest:
+                seen, top = await pull(self.client.iter_messages(ent, min_id=newest, limit=CATCHUP_LIMIT, reverse=True))
+                newest = max(newest, top)
+                pages += 1
         if first:
             out.reverse()  # сначала старые
         if newest:
