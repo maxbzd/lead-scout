@@ -267,3 +267,12 @@ async def test_stale_callback_does_not_cancel_the_action(bot2, db, pipe, chat_id
     await svc.handle_update({"update_id": 2, "callback_query": {"id": "c", "data": f"fb:up:{oid}", "from": {"id": OWNER},
                                                                  "message": {"message_id": 5, "chat": {"id": OWNER}}}})
     assert store.get_order(db, oid)["feedback"] == "up"
+
+
+async def test_tiny_messages_are_not_stored_and_old_chatter_is_purged(pipe, db, chat_id):
+    assert await pipe.process(make_raw(chat_id, "+1 жду", tg_msg_id=900)) is None
+    assert db.scalar("SELECT COUNT(*) FROM messages") == 0
+    await pipe.process(make_raw(chat_id, "Ребята, какая сегодня погода в ваших краях, всем хорошего вечера", tg_msg_id=901))
+    db.run("UPDATE messages SET posted_at='2020-01-01T00:00:00Z'")
+    store.purge_old(db, 60)
+    assert db.scalar("SELECT COUNT(*) FROM messages") == 0
