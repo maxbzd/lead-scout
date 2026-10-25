@@ -652,6 +652,17 @@ async def disconnect_bot(request: Request) -> dict:
     return {"bot": rt.bot_status()}
 
 
+@router.post("/quit")
+def quit_app(request: Request) -> dict:
+    """Закрыть программу на этом компьютере (кнопка в профиле). На сервере её нет."""
+    rt = rt_of(request)
+    stop = getattr(request.app.state, "quit", None)
+    if not rt.settings.local or stop is None:
+        raise HTTPException(404, "Не найдено")
+    stop()
+    return {"ok": True}
+
+
 class CloudIn(BaseModel):
     url: str = Field(min_length=8, max_length=300)
     token: str = Field(min_length=16, max_length=200)

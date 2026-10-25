@@ -1,0 +1,69 @@
+name: Windows app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps .
+          python -m pip install pyinstaller==6.22.3 pillow
+
+      - name: Build the app
+        run: >
+          pyinstaller --noconfirm --onedir --noconsole --name Scout
+          --icon leadscout/web/static/icons/icon-512.png
+          --paths . --collect-data leadscout --collect-submodules leadscout
+          --collect-submodules uvicorn --collect-data tzdata --hidden-import uvicorn.logging
+          packaging/scout_app.py
+
+      - name: Smoke test the built app
+        shell: pwsh
+        run: |
+          $env:LS_DATA_DIR = "$env:RUNNER_TEMP\scout-data"
+          $env:LS_PORT = "8123"
+          $p = Start-Process -FilePath "dist\Scout\Scout.exe" -PassThru
+          $ok = $false
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 1
+            try { $r = Invoke-RestMethod "http://localhost:8123/api/session"; if ($r.authed) { $ok = $true; break } } catch {}
+          }
+          if (-not $ok) { Get-Content "$env:LS_DATA_DIR\scout.log" -ErrorAction SilentlyContinue; throw "app did not start" }
+          $page = Invoke-WebRequest "http://localhost:8123/" -UseBasicParsing
+          if ($page.Content -notmatch "Scout") { throw "front page missing" }
+          Invoke-RestMethod -Method Post -Uri "http://localhost:8123/api/quit" -Headers @{ "X-Requested-With" = "leadscout" } | Out-Null
+          Start-Sleep -Seconds 4
+          if (-not $p.HasExited) { $p.Kill(); throw "app did not quit" }
+
+      - name: Build installer
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=1.0.${{ github.run_number }}" packaging\scout.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Scout-Setup
+          path: installer/Scout-Setup.exe
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "app-${{ github.run_number }}" installer/Scout-Setup.exe
+          --title "Scout для Windows (сборка ${{ github.run_number }})"
+          --notes "Скачайте Scout-Setup.exe, запустите и нажмите Далее. Windows может предупредить, что программа неизвестна: нажмите Подробнее, Выполнить в любом случае."

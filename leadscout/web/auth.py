@@ -91,10 +91,11 @@ def client_ip(request: Request) -> str:
 
 
 def require_auth(request: Request) -> None:
-    if request.app.state.settings.local:
-        return
-    auth: Auth = request.app.state.auth
-    if not auth.valid(request.cookies.get(COOKIE)):
-        raise HTTPException(status_code=401, detail="Нужно войти")
+    local = request.app.state.settings.local
+    if not local:
+        auth: Auth = request.app.state.auth
+        if not auth.valid(request.cookies.get(COOKIE)):
+            raise HTTPException(status_code=401, detail="Нужно войти")
+    # без пароля на своём компьютере этот заголовок единственное, что не даёт чужому сайту в соседней вкладке отправлять запросы программе
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("x-requested-with") != "leadscout":
         raise HTTPException(status_code=403, detail="Запрос не из приложения")

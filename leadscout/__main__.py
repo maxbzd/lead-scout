@@ -17,6 +17,8 @@ import uvicorn
 from .config import Settings
 from .web.app import create_app
 
+log = logging.getLogger("leadscout")
+
 
 def free_port(host: str, start: int) -> int:
     for port in range(start, start + 20):
@@ -34,12 +36,14 @@ def should_quit(now: float, started: float, last_request: float, clients: int, b
     return now - last_request > idle
 
 
-def run_local(settings: Settings) -> int:
+def run_local(settings: Settings, opener=None, on_ready=None, announce: bool = True) -> int:
+    """opener открывает окно (в установленной программе это своё окно без адресной строки), on_ready сообщает порт."""
     app = create_app(settings)
     url = f"http://localhost:{settings.port}"
     config = uvicorn.Config(app, host=settings.host, port=settings.port, timeout_graceful_shutdown=3, log_level="warning")
     server = uvicorn.Server(config)
     started = time.monotonic()
+    app.state.quit = lambda: setattr(server, "should_exit", True)  # кнопка «Закрыть программу»
 
     async def watchdog() -> None:
         while not server.should_exit:
@@ -48,7 +52,7 @@ def run_local(settings: Settings) -> int:
             busy = rt.scanning or bool(rt._tasks) or rt.cloud.enabled  # с облачным сайтом программа ждёт ваших действий с телефона
             if should_quit(time.monotonic(), started, app.state.last_request, rt.sse_clients, busy,
                            grace=float(os.environ.get("LS_QUIT_GRACE", 120)), idle=float(os.environ.get("LS_QUIT_IDLE", 90))):
-                print("Окно закрыто, останавливаюсь. До встречи!", flush=True)
+                log.info("Окно закрыто, останавливаюсь")
                 server.should_exit = True
 
     async def serve() -> None:
@@ -58,9 +62,12 @@ def run_local(settings: Settings) -> int:
         finally:
             watcher.cancel()
 
-    print(f"\n  Scout запущен: {url}\n  Данные хранятся в {settings.data_dir}\n"
-          "  Закройте окно приложения, и программа остановится сама (или нажмите Ctrl+C).\n  Если подключён облачный сайт, программа работает, пока открыто это чёрное окно.\n", flush=True)
-    threading.Timer(1.5, webbrowser.open, [url]).start()
+    if announce:
+        print(f"\n  Scout запущен: {url}\n  Данные хранятся в {settings.data_dir}\n"
+              "  Закройте окно приложения, и программа остановится сама (или нажмите Ctrl+C).\n  Если подключён облачный сайт, программа работает, пока открыто это чёрное окно.\n", flush=True)
+    if on_ready:
+        on_ready(settings.port)
+    threading.Timer(1.5, opener or webbrowser.open, [url]).start()
     asyncio.run(serve())
     return 0
 
