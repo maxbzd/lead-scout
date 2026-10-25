@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkPassword, currentDatabaseId, findDatabase, findUrl, newPassword, newToken, PLACEHOLDER_ID, setDatabaseId } from '../scripts/lib.mjs';
+import { checkPassword, currentDatabaseId, findDatabase, findUrl, newPassword, newToken, setDatabaseId } from '../scripts/lib.mjs';
 
-const TOML = 'name = "scout"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "scout"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n';
+const TOML = 'name = "scout"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "scout"\n';
 
 test('находит базу по имени в ответе wrangler', () => {
   const list = JSON.stringify([{ uuid: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb', name: 'other' }, { uuid: 'cccccccc-1111-2222-3333-dddddddddddd', name: 'scout' }]);
@@ -13,11 +13,12 @@ test('находит базу по имени в ответе wrangler', () => {
 });
 
 test('id базы вписывается в wrangler.toml и проверяется', () => {
-  assert.equal(currentDatabaseId(TOML), PLACEHOLDER_ID);
+  assert.equal(currentDatabaseId(TOML), null);
   const id = 'cccccccc-1111-2222-3333-dddddddddddd';
   const out = setDatabaseId(TOML, id);
   assert.equal(currentDatabaseId(out), id);
   assert.ok(out.includes('binding = "DB"'));
+  assert.equal(currentDatabaseId(setDatabaseId(out, 'eeeeeeee-1111-2222-3333-ffffffffffff')), 'eeeeeeee-1111-2222-3333-ffffffffffff');
   assert.throws(() => setDatabaseId(TOML, '"; rm -rf /'));
   assert.throws(() => setDatabaseId('name = "x"', id));
 });
