@@ -46,6 +46,9 @@ class RuleLLM:
     async def extract(self, text: str, hint: Extraction) -> Extraction:
         return hint
 
+    async def classify(self, texts, profile, yes, no):
+        return [None] * len(texts)  # без ИИ решают правила отбора
+
     async def score(self, order: OrderView, profile: Profile, learned: Learned) -> Score:
         keys = order_keys(order)
         matched = matched_keys(order, profile)

@@ -421,6 +421,10 @@ class Runtime:
             if oid:
                 new_ids.append(oid)
 
+        try:
+            await self.pipeline.prejudge(raws)  # ИИ сначала сам решает, что из прочитанного заказы
+        except Exception:
+            log.exception("prejudge failed")
         plain = [r for r in raws if not r.reply_to]
         replies = [r for r in raws if r.reply_to]
         await asyncio.gather(*(one(r) for r in plain))

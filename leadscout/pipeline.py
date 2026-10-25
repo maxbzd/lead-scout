@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import timedelta
 
-from . import ai_control, learning, store
+from . import ai_control, classify, learning, store
 from . import extract as ex
 from .config import Settings
 from .db import Database, dumps
@@ -46,10 +46,48 @@ class Pipeline:
         self._ai_checked = 0.0
         self._ai_state = True
         self._pending: dict[str, asyncio.Event] = {}  # тексты, которые разбираются прямо сейчас
+        self._verdicts: dict[tuple[int, int], classify.Verdict] = {}  # что ИИ решил про сообщения до разбора
         self._ai_fail: dict[int, tuple[int, float]] = {}  # заказ -> (число неудач ИИ, когда пробовать снова)
 
     def set_llm(self, llm: LLM) -> None:
         self.llm = llm
+
+    # ------------------------------------------- ИИ решает «заказ или нет» ----
+    def teach(self, text: str, is_order: bool) -> None:
+        """Ваше решение («Это заказ», 👍, «Это не заказ») становится примером для ИИ."""
+        classify.teach(self.db, text, is_order)
+
+    async def prejudge(self, raws: list[RawMessage]) -> None:
+        """ИИ читает новые сообщения пачками и решает, какие из них заказы. Не получилось: решат правила отбора."""
+        if not self.ai_on():
+            return
+        if len(self._verdicts) > 2000:
+            self._verdicts.clear()
+        profile = load_profile(self.db)
+        yes, no = classify.examples(self.db)
+        groups: dict[str, list[RawMessage]] = {}  # один и тот же текст из разных чатов читаем один раз
+        for r in raws:
+            text = (r.text or "").strip()
+            t = ex.squash(text)
+            if len(t) < 20 or r.reply_to or ex.is_supply(t) or ex.is_chat_rules(t):
+                continue
+            row = self.db.one("SELECT status FROM messages WHERE chat_id=? AND tg_msg_id=?", (r.chat_id, r.tg_msg_id))
+            if row and row["status"] != "new":
+                continue  # уже разобрано (пришло и вживую, и при проверке)
+            groups.setdefault(ex.content_hash(text), []).append(r)
+        heads = [g[0] for g in groups.values()]
+        for i in range(0, len(heads), classify.BATCH):
+            part = heads[i: i + classify.BATCH]
+            try:
+                verdicts = await self.llm.classify([(r.text or "").strip() for r in part], profile, yes, no)
+            except Exception:
+                log.exception("classify failed, rules decide")
+                return
+            for head, v in zip(part, verdicts, strict=True):
+                if v is None:
+                    continue
+                for r in groups[ex.content_hash((head.text or "").strip())]:
+                    self._verdicts[(r.chat_id, r.tg_msg_id)] = v
 
     # ----------------------------------------------------------- вход ----
     async def process(self, raw: RawMessage) -> int | None:
@@ -100,6 +138,7 @@ class Pipeline:
         if not row or self.db.one("SELECT 1 FROM orders WHERE message_id=?", (message_id,)):
             return None
         store.set_message_status(self.db, message_id, "new")
+        self.teach(row.get("text") or "", True)
         raw = store.raw_from_row(row)
         raw.reply_to = None
         return await self._process(raw, (raw.text or "").strip(), message_id, force=True)
@@ -108,11 +147,21 @@ class Pipeline:
         chat = self.db.one("SELECT * FROM chats WHERE id=?", (raw.chat_id,)) or {}
         if raw.reply_to and self._handle_reply(raw, mid, text):
             return None
-        strict = self._is_candidate(text)
-        lenient = force or (not strict and self._recall() and ex.maybe_order(text))
-        if not strict and not lenient:
-            store.set_message_status(self.db, mid, "noise")
+        verdict = None if force else self._verdicts.pop((raw.chat_id, raw.tg_msg_id), None)
+        if not force and (ex.is_supply(text) or ex.is_chat_rules(text)):
+            store.set_message_status(self.db, mid, "noise")  # исполнитель предлагает себя и правила чата: ИИ их даже не читает
             return None
+        if verdict is not None:
+            if not (verdict.order and (self._recall() or not verdict.unsure)):
+                store.set_message_status(self.db, mid, "noise")
+                return None
+            strict = lenient = True
+        else:
+            strict = self._is_candidate(text)
+            lenient = force or (not strict and self._recall() and ex.maybe_order(text))
+            if not strict and not lenient:
+                store.set_message_status(self.db, mid, "noise")
+                return None
         if self._attach_duplicate(raw, mid, text, chat):
             return None
         # один и тот же текст из нескольких чатов разбираем один раз: остальные ждут и склеиваются
@@ -127,12 +176,13 @@ class Pipeline:
                 return None
         done = self._pending.setdefault(h, asyncio.Event())
         try:
-            return await self._analyze(raw, text, mid, chat, force, strict or lenient)
+            return await self._analyze(raw, text, mid, chat, force, strict or lenient, verdict)
         finally:
             done.set()
             self._pending.pop(h, None)
 
-    async def _analyze(self, raw: RawMessage, text: str, mid: int, chat: dict, force: bool, lenient: bool) -> int | None:
+    async def _analyze(self, raw: RawMessage, text: str, mid: int, chat: dict, force: bool, lenient: bool,
+                       verdict: classify.Verdict | None = None) -> int | None:
         hint = rule_extract(text, raw.author_username, raw.author_flags)
         obvious_scam = any(f.level == "high" for f in hint.flags)  # очевидный обман не стоит запроса к ИИ
         try:
@@ -141,6 +191,10 @@ class Pipeline:
             log.exception("extract failed, using rules")
             ext = hint
         judged = ext is not hint  # ИИ действительно разобрал сообщение (а не вернул подсказку правил)
+        if verdict is not None and verdict.order:
+            ext.is_order = True  # решение ИИ при чтении пачкой главное: у него есть ваши примеры
+            if verdict.unsure and not any(f.code == "doubt" for f in ext.flags):
+                ext.flags = [*ext.flags, ex.Flag("doubt", "ИИ не уверен, что это заказ", "low")]
         if not ext.is_order:
             # правила сочли это заказом, а нейросеть нет (или заказ без явных слов): в режиме «ничего не пропускать» показываем с пометкой
             if force or (self._recall() and (hint.is_order or (not judged and lenient))):
