@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    branches: [release]  # пуш в ветку release собирает установщик и выкладывает его в Releases
 
 permissions:
   contents: write
