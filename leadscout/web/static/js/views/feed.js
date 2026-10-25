@@ -47,6 +47,9 @@ function paintBanners() {
     else if (!cl.online) out.push(html`<div class="banner warn">${I.alert}<span><b>Компьютер не в сети.</b> Данные на ${when}.${cl.pending ? ` Ваших действий в очереди: ${cl.pending}, они выполнятся при запуске программы.` : ' Оценки и закладки сохранятся и дойдут до него позже.'}</span></div>`);
     else if (cl.pending) out.push(html`<div class="banner"><span class="b-dot"></span><span>Передаю на компьютер: ${cl.pending}</span></div>`);
   }
+  if (st?.update?.available && st.update.can_install) {
+    out.push(html`<div class="banner"><span class="b-dot"></span><span><b>Есть обновление ${st.update.latest}.</b> Одна кнопка, и программа обновится сама.</span><button type="button" data-act="update-install">Обновить</button></div>`);
+  }
   const ai = st?.llm;
   if (ai && ai.mode !== 'rules' && ai.control && !ai.control.active) {
     const manual = ai.control.reason === 'manual';

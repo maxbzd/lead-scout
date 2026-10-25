@@ -34,4 +34,4 @@ Name: "{autoprograms}\Scout"; Filename: "{app}\Scout.exe"
 Name: "{autodesktop}\Scout"; Filename: "{app}\Scout.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Scout.exe"; Description: "Запустить Scout"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Scout.exe"; Description: "Запустить Scout"; Flags: nowait postinstall
