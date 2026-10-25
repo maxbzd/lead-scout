@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -27,6 +28,7 @@ from ..profile import (
 from ..runtime import Runtime
 from ..secrets_store import mask
 from ..sources.telegram import LoginError, TelegramProblem
+from ..updater import UpdateError, Updater
 from ..util import fmt_age, minutes_ago
 from .auth import COOKIE, MAX_AGE, Auth, client_ip, require_auth
 
@@ -324,6 +326,7 @@ def status(request: Request) -> dict:
         "public_url": rt.settings.public_url,
         "local": rt.settings.local,
         "cloud": rt.cloud.status(),
+        "update": rt.updater.status() if rt.settings.local else None,
     }
 
 
@@ -655,6 +658,37 @@ async def disconnect_bot(request: Request) -> dict:
     return {"bot": rt.bot_status()}
 
 
+def _local(request: Request) -> Runtime:
+    rt = rt_of(request)
+    if not rt.settings.local:
+        raise HTTPException(404, "Не найдено")
+    return rt
+
+
+@router.post("/update/check")
+async def update_check(request: Request) -> dict:
+    rt = _local(request)
+    return await rt.updater.check(time.monotonic())
+
+
+@router.post("/update/install")
+async def update_install(request: Request) -> dict:
+    """Скачать новую версию, запустить установщик и закрыть программу: установщик откроет обновлённую."""
+    rt = _local(request)
+    stop = getattr(request.app.state, "quit", None)
+    if rt.updater.status()["can_install"] is not True or stop is None:
+        raise UpdateError("Обновить кнопкой можно только в установленной программе для Windows. Скачайте свежий установщик вручную")
+    installer = await rt.updater.download()
+    Updater.launch(installer)
+    rt.spawn(_quit_soon(stop))
+    return {"ok": True}
+
+
+async def _quit_soon(stop) -> None:
+    await asyncio.sleep(1.5)  # даём ответу дойти до окна
+    stop()
+
+
 @router.post("/quit")
 def quit_app(request: Request) -> dict:
     """Закрыть программу на этом компьютере (кнопка в профиле). На сервере её нет."""
@@ -699,4 +733,4 @@ async def demo(body: DemoIn, request: Request) -> dict:
     return {"demo": rt.demo_enabled()}
 
 
-HUMAN_ERRORS = (LoginError, TelegramProblem, BotError, LLMUnavailable, CloudError)
+HUMAN_ERRORS = (LoginError, TelegramProblem, BotError, LLMUnavailable, CloudError, UpdateError)
