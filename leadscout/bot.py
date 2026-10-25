@@ -410,6 +410,7 @@ class BotService:
 
         if kind == "fb":
             if parts[1] == "up":
+                self.pipeline.teach(row.get("text") or "", True)
                 store.set_feedback(self.db, oid, "up")
                 if row["state"] == "hidden":
                     store.set_state(self.db, oid, "new")
@@ -421,6 +422,8 @@ class BotService:
                 await self.api.call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup=kb(*rows))
         elif kind == "why":
             code = parts[1]
+            if code == "notorder":
+                self.pipeline.teach(row.get("text") or "", False)
             store.set_feedback(self.db, oid, "down", code)
             store.set_state(self.db, oid, "hidden")
             await self._ack(cb_id, "Скрыл. Учту при подборе")

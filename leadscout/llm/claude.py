@@ -9,6 +9,7 @@ from typing import Any
 
 import anthropic
 
+from .. import classify
 from ..db import Database
 from ..extract import Contact, Flag
 from ..models import Extraction, Learned, OrderView, Score
@@ -258,6 +259,14 @@ class ClaudeLLM:
             raise LLMUnavailable("ответ не объект")
         return data
 
+    # --- «заказ или нет» -----------------------------------------------
+    async def _classify_call(self, system: str, user: str) -> str:
+        return await self._call(self.model_fast, system, user, schema=classify.CLASSIFY_SCHEMA, effort="low", max_tokens=2000)
+
+    async def classify(self, texts: list[str], profile: Profile, yes: list[str], no: list[str]) -> list[classify.Verdict | None]:
+        system, user = classify.build_prompt(texts, profile, yes, no)
+        return classify.parse_verdicts(self._json(await self._classify_call(system, user)), len(texts))
+
     # --- разбор --------------------------------------------------------
     async def extract(self, text: str, hint: Extraction) -> Extraction:
         hints = {
@@ -445,6 +454,14 @@ class FallbackLLM:
             self.failures += 1
             log.warning("claude extract failed: %s", e)
             return await self.fallback.extract(text, hint)
+
+    async def classify(self, texts: list[str], profile: Profile, yes: list[str], no: list[str]) -> list[classify.Verdict | None]:
+        try:
+            return await self.primary.classify(texts, profile, yes, no)
+        except LLMUnavailable as e:
+            self.failures += 1
+            log.warning("claude classify failed: %s", e)
+            return [None] * len(texts)  # решат правила
 
     async def score(self, order: OrderView, profile: Profile, learned: Learned) -> Score:
         try:
