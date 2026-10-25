@@ -1,8 +1,6 @@
 // Мелкие чистые функции мастера развёртывания: их можно проверить тестами без аккаунта Cloudflare.
 import { randomBytes } from 'node:crypto';
 
-export const PLACEHOLDER_ID = '00000000-0000-0000-0000-000000000000';
-
 export function findDatabase(listJson, name) {
   let items;
   try { items = JSON.parse(listJson); } catch { return null; }
@@ -13,8 +11,9 @@ export function findDatabase(listJson, name) {
 
 export function setDatabaseId(toml, id) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Некорректный идентификатор базы');
-  if (!/database_id\s*=\s*"[^"]*"/.test(toml)) throw new Error('В wrangler.toml нет строки database_id');
-  return toml.replace(/database_id\s*=\s*"[^"]*"/, `database_id = "${id}"`);
+  if (/database_id\s*=\s*"[^"]*"/.test(toml)) return toml.replace(/database_id\s*=\s*"[^"]*"/, `database_id = "${id}"`);
+  if (!/database_name\s*=\s*"[^"]*"\r?\n/.test(toml)) throw new Error('В wrangler.toml нет строки database_name');
+  return toml.replace(/(database_name\s*=\s*"[^"]*"\r?\n)/, `$1database_id = "${id}"\n`);
 }
 
 export function currentDatabaseId(toml) {

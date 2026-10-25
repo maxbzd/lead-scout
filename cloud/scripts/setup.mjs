@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { PLACEHOLDER_ID, checkPassword, currentDatabaseId, findDatabase, findUrl, newPassword, newToken, setDatabaseId } from './lib.mjs';
+import { checkPassword, currentDatabaseId, findDatabase, findUrl, newPassword, newToken, setDatabaseId } from './lib.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const toml = join(root, 'wrangler.toml');
@@ -12,7 +12,8 @@ const secretsFile = join(root, '.scout-secrets.json');
 const DB_NAME = 'scout';
 
 const wrangler = (args, { capture = false } = {}) => {
-  const r = spawnSync('npx', ['wrangler', ...args], { cwd: root, encoding: 'utf8', stdio: capture ? ['inherit', 'pipe', 'pipe'] : ['inherit', 'inherit', 'inherit'] });
+  // в Windows npx это npx.cmd: без shell его не запустить
+  const r = spawnSync('npx', ['wrangler', ...args], { cwd: root, encoding: 'utf8', shell: process.platform === 'win32', stdio: capture ? ['inherit', 'pipe', 'pipe'] : ['inherit', 'inherit', 'inherit'] });
   return { ok: r.status === 0, out: `${r.stdout || ''}${r.stderr || ''}`, stdout: r.stdout || '' };
 };
 
@@ -29,11 +30,11 @@ async function main() {
   } else console.log('Вы уже вошли.');
 
   step(2, 'Подготовка сайта');
-  if (spawnSync('node', ['scripts/prepare.mjs'], { cwd: root, stdio: 'inherit' }).status !== 0) fail('Не удалось подготовить файлы сайта.');
+  if (spawnSync(process.execPath, ['scripts/prepare.mjs'], { cwd: root, stdio: 'inherit' }).status !== 0) fail('Не удалось подготовить файлы сайта.');
 
   step(3, 'База данных');
   let text = readFileSync(toml, 'utf8');
-  if (currentDatabaseId(text) === PLACEHOLDER_ID) {
+  if (!currentDatabaseId(text)) {
     let id = findDatabase(wrangler(['d1', 'list', '--json'], { capture: true }).stdout, DB_NAME);
     if (!id) {
       if (!wrangler(['d1', 'create', DB_NAME]).ok) fail('Не удалось создать базу. Если она уже есть в Cloudflare, удалите её в панели или впишите её id в cloud/wrangler.toml.');
