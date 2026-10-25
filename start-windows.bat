@@ -20,6 +20,17 @@ if not exist ".venv\installed.flag" (
   echo ok> .venv\installed.flag
 )
 
+if not exist ".venv\shortcut.flag" (
+  powershell -NoProfile -Command "$d=[Environment]::GetFolderPath('Desktop'); $s=(New-Object -ComObject WScript.Shell).CreateShortcut($d+'\Scout.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='-m leadscout.desktop'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0leadscout\web\static\icons\scout.ico'; $s.Save()"
+  echo ok> .venv\shortcut.flag
+  echo.
+  echo A "Scout" shortcut was added to your Desktop. Next time just click it, no need to run this file.
+  echo Starting Scout now...
+  start "" ".venv\Scripts\pythonw.exe" -m leadscout.desktop
+  timeout /t 5 >nul
+  exit /b 0
+)
+
 .venv\Scripts\python -m leadscout --local
 pause
 exit /b 0
