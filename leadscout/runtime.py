@@ -24,6 +24,7 @@ from .profile import load_profile
 from .secrets_store import Secrets
 from .sources.demo import DemoSource
 from .sources.telegram import LoginError, TelegramLogin, TelegramProblem, TelegramReader, revoke_session
+from .updater import Updater
 from .util import iso, now_utc, parse_iso
 
 log = logging.getLogger("leadscout.runtime")
@@ -62,6 +63,7 @@ class Runtime:
         self._sem = asyncio.Semaphore(CONCURRENCY)
         self.app = None  # веб-приложение: ставится при сборке, нужно облачной синхронизации
         self.cloud = CloudSync(self)
+        self.updater = Updater()
 
     SCAN_CHOICES = (10, 30, 60, 120, 360)
 
@@ -516,6 +518,7 @@ class Runtime:
                 ("upgrade", self.pipeline.upgrade_with_ai() if not manual else None),  # при ручной проверке ИИ работает сразу после неё
                 ("maintenance", self._maintenance()),
                 ("cloud", self.cloud.cycle() if self.app is not None else None),
+                ("update", self.updater.check(time.monotonic()) if self.settings.local and self.updater.due(time.monotonic()) else None),
             ]
             for name, coro in steps:  # сбой одного шага не должен останавливать остальные
                 if coro is None:

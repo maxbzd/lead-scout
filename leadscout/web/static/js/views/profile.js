@@ -95,6 +95,7 @@ export async function renderProfile() {
     </div>
 
     <div class="glass" id="install"></div>
+    ${S.status.local ? html`<div class="glass field" id="update"></div>` : ''}
     ${S.status.local ? html`<button class="btn" type="button" data-act="quit-app" style="width:100%">Закрыть программу</button><p class="capnote center">${S.status.cloud?.connected ? 'Окно можно закрыть, программа продолжит работать и принимать действия с сайта. Этой кнопкой она останавливается совсем.' : 'Закрыв окно, вы тоже остановите программу через пару минут.'}</p>` : html`<button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>`}
     <p class="mono center" style="margin:6px 0 0">Scout 1.0</p>
   </div></section>`);
@@ -108,6 +109,7 @@ export async function renderProfile() {
   paintNotif();
   paintConns();
   paintInstall();
+  paintUpdate();
   paintChatsNote();
   paintScanSeg();
 }
@@ -253,6 +255,17 @@ export function paintConns() {
     st.cloud?.hosted ? html`<p class="capnote">Telegram, бот и ИИ подключаются в программе на компьютере. Здесь они только показаны.</p>` : '',
     l.control ? html`<div class="sw-row"><div><div class="t">Пауза ИИ</div><div class="s">${l.control.reason === 'backlog' ? `Включилась сама: неразобранных ${l.control.backlog}` : 'Не тратить запросы, пока вы разбираете заказы'}</div></div><button class="sw" role="switch" aria-checked="${!l.control.active}" data-act="ai-pause-quick" aria-label="Пауза ИИ"></button></div>` : '',
   ]);
+}
+
+export function paintUpdate() {
+  const el = $('#update');
+  const u = S.status?.update;
+  if (!el || !u) return;
+  const state = u.available ? `Доступна версия ${u.latest}.` : u.error ? u.error : u.checked_at ? 'У вас последняя версия.' : 'Ещё не проверял.';
+  const act = u.available && u.can_install ? html`<button class="btn pri small" type="button" data-act="update-install">Обновить</button>`
+    : u.available ? html`<span class="capnote">Скачайте свежий установщик с GitHub: из запуска файлом обновить кнопкой нельзя.</span>`
+      : html`<button class="btn small" type="button" data-act="update-check">Проверить</button>`;
+  paint(el, html`<div class="mono">обновления</div><div class="sw-row"><div><div class="t">Scout ${u.current}</div><div class="s">${state}</div></div>${act}</div>`);
 }
 
 function paintInstall() {
@@ -422,6 +435,16 @@ export const profileActions = {
     await deferredInstall.userChoice.catch(() => {});
     deferredInstall = null;
     paintInstall();
+  },
+  'update-check': async () => {
+    S.status.update = await post('/update/check');
+    paintUpdate();
+    toast(S.status.update.available ? `Доступна версия ${S.status.update.latest}` : S.status.update.error || 'У вас последняя версия');
+  },
+  'update-install': async () => {
+    toast('Скачиваю обновление. Программа закроется и откроется заново.');
+    await post('/update/install');
+    paint($('#view'), html`<section class="view"><div class="glass field" style="margin-top:24px"><h3 class="ready-t">Устанавливаю обновление</h3><p class="lead-p">Окно закроется само, через несколько секунд Scout откроется уже новой версии. Если не открылся, нажмите на значок Scout.</p></div></section>`);
   },
   'quit-app': async () => {
     await post('/quit');
