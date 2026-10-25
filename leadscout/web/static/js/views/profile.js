@@ -95,7 +95,7 @@ export async function renderProfile() {
     </div>
 
     <div class="glass" id="install"></div>
-    ${S.status.local ? '' : html`<button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>`}
+    ${S.status.local ? html`<button class="btn" type="button" data-act="quit-app" style="width:100%">Закрыть программу</button><p class="capnote center">${S.status.cloud?.connected ? 'Окно можно закрыть, программа продолжит работать и принимать действия с сайта. Этой кнопкой она останавливается совсем.' : 'Закрыв окно, вы тоже остановите программу через пару минут.'}</p>` : html`<button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>`}
     <p class="mono center" style="margin:6px 0 0">Scout 1.0</p>
   </div></section>`);
   paintReady();
@@ -422,6 +422,10 @@ export const profileActions = {
     await deferredInstall.userChoice.catch(() => {});
     deferredInstall = null;
     paintInstall();
+  },
+  'quit-app': async () => {
+    await post('/quit');
+    paint($('#view'), html`<section class="view"><div class="glass field" style="margin-top:24px"><h3 class="ready-t">Программа остановлена</h3><p class="lead-p">Окно можно закрыть. Чтобы запустить снова, нажмите на значок Scout.</p></div></section>`);
   },
   logout: async () => {
     try { await post('/logout'); } catch { /* всё равно выходим */ }
