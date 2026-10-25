@@ -83,6 +83,17 @@ class Pipeline:
                 log.exception("retry failed")
         return ids
 
+    def purge_non_orders(self) -> int:
+        """Объявления исполнителей и правила чата, попавшие в ленту раньше, убираем (в «Отброшено» они остаются). Тронутое вами не удаляется."""
+        rows = self.db.all(
+            "SELECT o.id, o.message_id, m.text FROM orders o JOIN messages m ON m.id=o.message_id "
+            "WHERE o.feedback IS NULL AND o.stage IS NULL AND o.offered_at IS NULL AND o.state NOT IN ('saved') AND o.verdict!='scam'")
+        gone = [r for r in rows if ex.is_supply(r["text"] or "") or ex.is_chat_rules(r["text"] or "")]
+        for r in gone:
+            self.db.run("DELETE FROM orders WHERE id=?", (r["id"],))
+            store.set_message_status(self.db, r["message_id"], "noise")
+        return len(gone)
+
     async def promote(self, message_id: int) -> int | None:
         """«Это заказ»: берём отброшенное сообщение и обрабатываем его без отбора."""
         row = self.db.one("SELECT * FROM messages WHERE id=?", (message_id,))

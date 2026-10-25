@@ -559,6 +559,8 @@ class Runtime:
             return
         self._last_maint = time.monotonic()
         store.purge_old(self.db, 60)
+        if self.pipeline.purge_non_orders():
+            self.bus.publish({"type": "orders", "ids": []})
         learning.refresh_suggestions(self.db, load_profile(self.db))
 
     def minutes_since_scan(self) -> int | None:
