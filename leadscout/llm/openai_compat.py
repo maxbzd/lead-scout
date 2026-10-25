@@ -202,6 +202,9 @@ class OpenAICompatLLM(ClaudeLLM):
     def _json(text: str) -> dict:
         return parse_json_loose(text)
 
+    async def _classify_call(self, system: str, user: str) -> str:
+        return await self._call(self.model, system, user, schema=None, wants_json=True, max_tokens=2000)
+
     # --- один запрос вместо двух ----------------------------------------
     async def extract(self, text: str, hint: Extraction) -> Extraction:
         return hint  # поля из текста берут правила, а «заказ или нет» решает оценка ниже: так запросов вдвое меньше

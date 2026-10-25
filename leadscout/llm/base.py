@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from ..classify import Verdict
 from ..models import Extraction, Learned, OrderView, Score
 from ..profile import Profile
 
@@ -14,6 +15,8 @@ class LLM(Protocol):
     name: str
 
     async def extract(self, text: str, hint: Extraction) -> Extraction: ...
+
+    async def classify(self, texts: list[str], profile: Profile, yes: list[str], no: list[str]) -> list[Verdict | None]: ...
 
     async def score(self, order: OrderView, profile: Profile, learned: Learned) -> Score: ...
 

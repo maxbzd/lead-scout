@@ -212,7 +212,7 @@ async def make_draft(order_id: int, body: DraftIn, request: Request) -> dict:
 
 class FeedbackIn(BaseModel):
     kind: Literal["up", "down", "clear"]
-    reason: Literal["profile", "budget", "terms", "scam", "other"] | None = None
+    reason: Literal["profile", "budget", "terms", "scam", "notorder", "other"] | None = None
 
 
 @router.post("/orders/{order_id}/feedback")
@@ -220,10 +220,13 @@ def feedback(order_id: int, body: FeedbackIn, request: Request) -> dict:
     rt = rt_of(request)
     row = _row(rt, order_id)
     if body.kind == "up":
+        rt.pipeline.teach(row.get("text") or "", True)
         store.set_feedback(rt.db, order_id, "up")
         if row["state"] == "hidden":
             store.set_state(rt.db, order_id, "new")
     elif body.kind == "down":
+        if body.reason == "notorder":
+            rt.pipeline.teach(row.get("text") or "", False)  # ИИ ошибся: запоминаем как пример «не заказ»
         store.set_feedback(rt.db, order_id, "down", body.reason or "other")
         store.set_state(rt.db, order_id, "hidden")
     else:

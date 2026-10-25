@@ -7,7 +7,7 @@ import { paintAll, paintChips, paintList } from './feed.js';
 
 const TONES = [['short', 'Коротко'], ['warm', 'Тепло'], ['formal', 'Деловой']];
 const STAGES = [['wait', 'Ждём ответа'], ['ans', 'Заказчик ответил'], ['work', 'Взял в работу'], ['no', 'Отказ']];
-const REASONS = [['profile', 'Не мой профиль'], ['budget', 'Низкий бюджет'], ['terms', 'Не те сроки'], ['scam', 'Подозрительно'], ['other', 'Просто не нравится']];
+const REASONS = [['profile', 'Не мой профиль'], ['budget', 'Низкий бюджет'], ['terms', 'Не те сроки'], ['scam', 'Подозрительно'], ['notorder', 'Это не заказ'], ['other', 'Просто не нравится']];
 
 let D = null; // открытый сейчас заказ
 
