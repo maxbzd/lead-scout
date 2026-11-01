@@ -170,7 +170,7 @@ function view() {
           <li>Вставьте ключ ниже${p.needs_key ? '' : ' (для своей модели он не нужен)'}.</li>
           <li>Нажмите проверку: приложение сделает один пробный запрос.</li>
         </ol>
-        ${p.needs_key ? field('ai-free-key', 'Ключ', { type: 'password', ph: 'Вставьте ключ', auto: true }) : ''}
+        ${p.needs_key ? html`<label class="lbl" for="ai-free-key">Ключ (можно несколько, по одному в строке)</label><textarea class="inp secret" id="ai-free-key" rows="2" placeholder="Вставьте ключ" autocomplete="off" autocapitalize="off" spellcheck="false" data-autofocus></textarea>` : ''}
         ${p.id === 'custom' || p.id === 'ollama' ? field('ai-free-url', 'Адрес сервиса', { type: 'url', ph: 'https://…/v1', value: p.base_url }) : ''}
         ${field('ai-free-model', 'Модель', { ph: p.model || 'название модели', value: p.model })}
         ${C.models?.length ? html`<div class="chips wrap">${C.models.slice(0, 24).map((m) => raw(`<button class="chip" type="button" data-act="ai-model-pick" data-v="${esc(m)}">${esc(m)}</button>`))}</div>` : html`<button class="linkish" type="button" data-act="ai-models">Показать доступные модели</button>`}
@@ -198,12 +198,26 @@ function view() {
       return html`${sheetHead('ИИ-режим включён')}
         <div class="okbox">${I.check}<div><b>${free ? `Подключено: ${l.model}` : 'Claude подключён'}</b><p>${l.error ? html`<span class="warn-t">Сейчас есть проблема: ${l.error}. Пока работаю по простым правилам.</span>` : 'Бот понимает смысл заказов и пишет отклики.'}</p>
           ${free ? html`<p>Сегодня запросов: ${l.used_today} из ${l.limit_today}. Когда лимит кончится, бот до утра работает по правилам.</p>` : u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
+        ${free ? keysBlock(l) : ''}
         ${controlBlock(l.control)}
         <div class="btnrow">${l.source === 'app' ? html`<button class="btn danger" type="button" data-act="${free ? 'ai-free-off' : 'ai-off'}">Отключить</button>` : ''}<button class="btn pri" type="button" data-act="close">Готово</button></div>`;
     }
     default:
       return '';
   }
+}
+
+const KEY_STATE = { ok: 'работает', limit: 'лимит на сегодня', blocked: 'ждёт', bad: 'не подошёл' };
+
+function keysBlock(l) {
+  const keys = l.keys || [];
+  const editable = l.source === 'app';
+  return html`<div class="sec"><span class="mono">Ключи (${keys.length})</span>
+    <p class="capnote" style="margin-top:8px">Запросы распределяются между ключами поровну, а когда у одного кончился лимит, бот берёт другой. Лимит считает сам сервис на проект: ключи из одного проекта делят один лимит, поэтому создавайте ключи в разных проектах.</p>
+    ${keys.map((k, i) => html`<div class="sw-row"><div><div class="t">${k.mask} <span class="st ${k.state === 'ok' ? 'ok' : 'off'}">${KEY_STATE[k.state] || k.state}</span></div><div class="s">сегодня ${k.used} из ${k.limit}</div></div>${editable ? html`<button class="btn small" type="button" data-act="ai-key-del" data-i="${i}">Убрать</button>` : ''}</div>`)}
+    ${editable ? html`<label class="lbl" for="ai-add-key">Добавить ещё ключ</label><div class="row-inp"><input class="inp secret" id="ai-add-key" type="text" placeholder="Вставьте ключ" autocomplete="off" spellcheck="false"><button class="btn small" type="button" data-act="ai-key-add" ${C.busy ? raw('disabled') : ''}>Добавить</button></div>` : html`<p class="capnote">Ключи заданы в файле .env: менять их нужно там.</p>`}
+    ${err()}
+  </div>`;
 }
 
 function controlBlock(c) {
@@ -349,6 +363,17 @@ export const connectActions = {
     await loadStatus();
     toast('ИИ подключён');
     rerender('ai-done');
+  }),
+  'ai-key-add': () => run(async () => {
+    await post('/connect/ai/keys', { key: val('ai-add-key') });
+    await loadStatus();
+    toast('Ключ добавлен');
+    rerender('ai-done');
+  }),
+  'ai-key-del': (el) => run(async () => {
+    await del(`/connect/ai/keys/${+el.dataset.i}`);
+    await loadStatus();
+    rerender(S.status.llm.mode === 'rules' ? 'ai-pick' : 'ai-done');
   }),
   'ai-free-off': () => run(async () => {
     await del('/connect/ai');
