@@ -521,3 +521,4 @@ html, body { overflow-x: clip; }
 
 .chk { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--ink2); }
 .chk input { width: 16px; height: 16px; accent-color: #8E7BFF; }
+.money[hidden] { display: none !important; }

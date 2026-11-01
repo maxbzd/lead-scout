@@ -55,7 +55,7 @@ async def test_score_parses_and_applies_hard_rules():
     assert seen["auth"] == "Bearer key-12345" and seen["body"]["model"] == "m1"
     assert seen["body"]["response_format"] == {"type": "json_object"}
     # бюджет ниже минимума важнее мнения модели
-    s2 = await m.score(view(), Profile(min_budget=500000, recall=False), Learned())
+    s2 = await m.score(view(), Profile(min_budget=500000, recall=False, ignore_budget=False), Learned())
     assert s2.verdict == "skip"
 
 

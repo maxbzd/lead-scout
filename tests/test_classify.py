@@ -278,4 +278,4 @@ def test_your_own_words_about_wanted_orders_reach_both_ai_prompts():
     from leadscout.llm.claude import ClaudeLLM
 
     assert "Не нужны сайты на Тильде" in ClaudeLLM._profile_block(prof)
-    assert "СЛОВА САМОГО ФРИЛАНСЕРА" not in classify.build_prompt(["текст"], Profile(), [], [])[0]
+    assert "СЛОВА САМОГО ФРИЛАНСЕРА" not in classify.build_prompt(["текст"], Profile(criteria=""), [], [])[0]

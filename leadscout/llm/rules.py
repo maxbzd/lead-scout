@@ -69,7 +69,9 @@ class RuleLLM:
             fit.append({"ok": False, "text": "Не удалось понять, какие навыки нужны"})
 
         b = order.budget_rub
-        if b is None:
+        if profile.ignore_budget:
+            s += 14  # цена не важна: заказ без цены и с любой ценой получает ту же надбавку, что раньше давал нормальный бюджет
+        elif b is None:
             s -= 3
             fit.append({"ok": False, "text": "Бюджет не указан, придётся уточнять"})
         elif below_minimum(order, profile):
@@ -82,7 +84,7 @@ class RuleLLM:
                 fit.append({"ok": True, "text": f"Ставка {fmt_money(b)} в час: за день ≈ {fmt_money(hourly_to_day(b))}"})
 
         rate = order.rate_per_day
-        if rate is not None and profile.day_rate:
+        if rate is not None and profile.day_rate and not profile.ignore_budget:
             if rate >= profile.day_rate:
                 s += 6
                 fit.append({"ok": True, "text": f"≈ {fmt_money(rate)} в день, не ниже вашей ставки"})
@@ -92,10 +94,12 @@ class RuleLLM:
                 s -= 6
                 fit.append({"ok": False, "text": f"≈ {fmt_money(rate)} в день, ниже вашей ставки {fmt_money(profile.day_rate)}"})
 
-        if order.period == "hour" and "hourly" not in profile.pay_types:
+        if profile.ignore_budget:
+            pass
+        elif order.period == "hour" and "hourly" not in profile.pay_types:
             s -= 8
             fit.append({"ok": False, "text": "Почасовая оплата, а вы берёте фикс за проект"})
-        if order.period == "month" and "retainer" not in profile.pay_types:
+        if not profile.ignore_budget and order.period == "month" and "retainer" not in profile.pay_types:
             s -= 6
 
         age = order.age_minutes
