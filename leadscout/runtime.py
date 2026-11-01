@@ -42,6 +42,7 @@ class Runtime:
         self.bus = EventBus()
         self.llm: LLM = RuleLLM()
         self.pipeline = Pipeline(self.db, self.llm, settings)
+        self.pipeline.on_progress = lambda: self.bus.publish({"type": "status"})
         self.source: DemoSource | TelegramReader | None = None
         self.bot: BotService | None = None
         self.bot_error: str | None = None
@@ -498,7 +499,7 @@ class Runtime:
         if self.settings.run_worker and self.source is not None:
             elapsed = time.monotonic() - self._last_scan_mono if self._last_scan_mono else 0
             nxt = max(0, int(self.scan_minutes * 60 - elapsed)) if self.scan_minutes else None
-        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes}
+        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes, "progress": self.pipeline.progress}
 
     # ---------------------------------------------------- расписание ----
     async def _loop(self) -> None:

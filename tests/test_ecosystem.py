@@ -121,3 +121,32 @@ def test_backup_is_a_working_database_without_secrets(tmp_path):
 def test_backup_not_on_a_server(client):
     client.post("/api/login", json={"password": "secret-pw"}, headers=H)
     assert client.get("/api/backup").status_code == 404
+
+
+def test_a_startup_crash_is_logged_and_shown_not_silent(tmp_path, monkeypatch):
+    shown = []
+    monkeypatch.setattr(desktop, "_main", lambda argv=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(desktop, "_fatal", lambda text: shown.append(text))
+    assert desktop.main([]) == 1
+    assert shown and "scout.log" in shown[0]
+
+
+def test_log_is_rotated_when_it_grows_too_big(tmp_path):
+    log = tmp_path / "scout.log"
+    log.write_bytes(b"x" * (desktop.MAX_LOG + 1))
+    desktop._rotate(log)
+    assert not log.exists() and (tmp_path / "scout.log.1").exists()
+    small = tmp_path / "small.log"
+    small.write_text("ok")
+    desktop._rotate(small)
+    assert small.exists()
+
+
+def test_desktop_uses_its_own_quiet_port_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("LS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("LS_PORT", raising=False)
+    got = {}
+    monkeypatch.setattr("leadscout.__main__.run_local", lambda s, **kw: got.update(port=s.port) or 0)
+    monkeypatch.setattr("leadscout.__main__.free_port", lambda host, start: start)
+    assert desktop.main([]) == 0
+    assert got["port"] == desktop.DEFAULT_PORT
