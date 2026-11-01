@@ -54,15 +54,39 @@ function paintBanners() {
   }
   if (cl?.hosted) {
     // подключения на сайте только показываем: менять их можно в программе на компьютере
-  } else if (st?.demo) {
-    out.push(html`<div class="banner"><span class="b-dot"></span><span><b>Демо.</b> Заказы тестовые.</span><button type="button" data-act="connect-tg">Подключить Telegram</button></div>`);
-  } else if (st && st.telegram.state !== 'ready') {
-    const msg = st.telegram.state === 'unauthorized' ? 'Telegram разлогинил аккаунт. Войдите заново.' : st.telegram.error || 'Бот пока не читает ваши чаты.';
-    out.push(html`<div class="banner warn">${I.alert}<span>${msg}</span><button type="button" data-act="connect-tg">${st.telegram.state === 'unauthorized' ? 'Войти' : 'Подключить'}</button></div>`);
-  } else if (st && st.ready.find((r) => r.id === 'chats' && !r.ok)) {
-    out.push(html`<div class="banner"><span class="b-dot"></span><span>Выберите чаты, которые читать.</span><button type="button" data-act="open-chats">Выбрать</button></div>`);
+  } else if (st && st.telegram.state === 'unauthorized') {
+    out.push(html`<div class="banner warn">${I.alert}<span>Telegram разлогинил аккаунт. Войдите заново.</span><button type="button" data-act="connect-tg">Войти</button></div>`);
+  } else if (st && st.telegram.state === 'error' && st.telegram.error) {
+    out.push(html`<div class="banner warn">${I.alert}<span>${st.telegram.error}</span><button type="button" data-act="connect-tg">Подробнее</button></div>`);
+  } else {
+    const step = nextSetupStep(st);
+    if (step && !setupSnoozed()) {
+      out.push(html`<div class="banner setup"><span class="b-dot"></span><span><b>Настройка: шаг ${step.n} из ${step.of}. ${step.title}.</b> ${step.text}</span><button type="button" data-act="${step.act}">${step.btn}</button><button type="button" class="later" data-act="setup-later">Позже</button></div>`);
+    }
   }
   paint($('#banners'), out);
+}
+
+// Первая настройка по порядку: ИИ, Telegram, чаты, бот на телефон, сайт на телефон. Показываем только первый невыполненный шаг.
+function nextSetupStep(st) {
+  if (!st) return null;
+  const chatsOk = !!st.ready.find((r) => r.id === 'chats' && r.ok);
+  const steps = [
+    [st.llm.mode !== 'rules', 'Подключите ИИ', 'Он сам отличает настоящие заказы от болтовни и объявлений исполнителей. Подойдёт бесплатный Gemini.', 'connect-ai', 'Подключить'],
+    [st.telegram.state === 'ready', 'Подключите Telegram', st.demo ? 'Сейчас показаны тестовые заказы.' : 'Без этого бот не читает ваши чаты.', 'connect-tg', 'Подключить'],
+    [chatsOk, 'Выберите чаты', 'Бот читает только те, что вы отметите.', 'open-chats', 'Выбрать'],
+    [!!st.bot.paired, 'Подключите бота', 'Он присылает свежие заказы на телефон.', 'connect-bot', 'Подключить'],
+  ];
+  if (st.local) steps.push([!!st.cloud?.connected, 'Сайт для телефона', 'Заказы и ваши оценки будут храниться в облаке и открываться с телефона.', 'connect-cloud', 'Подключить']);
+  const at = steps.findIndex((s) => !s[0]);
+  if (at < 0) return null;
+  const [, title, text, act, btn] = steps[at];
+  return { n: at + 1, of: steps.length, title, text, act, btn };
+}
+
+const SNOOZE = 'ls:setup-snooze';
+function setupSnoozed() {
+  try { return Date.now() < +(localStorage.getItem(SNOOZE) || 0); } catch { return false; }
 }
 
 function paintHero() {
@@ -173,6 +197,7 @@ export function paintList(anim = false) {
   $('#shown').textContent = S.feed ? `показано ${items.length}` : '';
   const draw = S.filter === 'discarded' ? (o) => discardedHtml(o) : cardHtml;
   paint(list, items.length ? items.map((o, i) => draw(o, i)) : emptyState());
+  markSel();
 }
 
 export async function refreshFeed({ anim = false } = {}) {
@@ -229,6 +254,26 @@ export function paintUpdateBar() {
     : html`<span><b>Есть новая версия ${u.latest}.</b> Нажмите, и программа обновится сама, данные сохранятся.</span><button type="button" data-act="update-install">Обновить</button>`);
 }
 
+// Выбранная карточка (клавиши j/k на компьютере)
+let selId = null;
+export function markSel() {
+  document.querySelectorAll('.card.sel').forEach((c) => c.classList.remove('sel'));
+  if (selId == null) return;
+  const el = document.querySelector(`.card[data-id="${selId}"]`);
+  if (el) el.classList.add('sel');
+}
+export function moveSel(delta) {
+  const cards = [...document.querySelectorAll('.card[data-id]')];
+  if (!cards.length) return null;
+  const at = cards.findIndex((c) => +c.dataset.id === selId);
+  const next = cards[Math.max(0, Math.min(cards.length - 1, at < 0 ? 0 : at + delta))];
+  selId = +next.dataset.id;
+  markSel();
+  next.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  return selId;
+}
+export const currentSel = () => selId;
+
 export function updateScanPill() {
   paintUpdateBar();
   const pill = $('#scan-txt');
@@ -274,6 +319,11 @@ async function quickOfferNow(id) {
 }
 
 export const feedActions = {
+  'setup-later': () => {
+    try { localStorage.setItem(SNOOZE, String(Date.now() + 24 * 3600 * 1000)); } catch { /* без памяти подсказка вернётся */ }
+    paintBanners();
+    toast('Напомню завтра. Всё можно настроить в Профиле.');
+  },
   filter: async (el) => { S.filter = el.dataset.v; await refreshFeed({ anim: true }); window.scrollTo(0, 0); },
   sort: async (el) => { S.sort = el.dataset.v; await refreshFeed({ anim: true }); },
   open: (el) => openOrder(+el.dataset.id),
