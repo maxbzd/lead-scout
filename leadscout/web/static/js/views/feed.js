@@ -47,9 +47,6 @@ function paintBanners() {
     else if (!cl.online) out.push(html`<div class="banner warn">${I.alert}<span><b>Компьютер не в сети.</b> Данные на ${when}.${cl.pending ? ` Ваших действий в очереди: ${cl.pending}, они выполнятся при запуске программы.` : ' Оценки и закладки сохранятся и дойдут до него позже.'}</span></div>`);
     else if (cl.pending) out.push(html`<div class="banner"><span class="b-dot"></span><span>Передаю на компьютер: ${cl.pending}</span></div>`);
   }
-  if (st?.update?.available && st.update.can_install) {
-    out.push(html`<div class="banner"><span class="b-dot"></span><span><b>Есть обновление ${st.update.latest}.</b> Одна кнопка, и программа обновится сама.</span><button type="button" data-act="update-install">Обновить</button></div>`);
-  }
   const ai = st?.llm;
   if (ai && ai.mode !== 'rules' && ai.control && !ai.control.active) {
     const manual = ai.control.reason === 'manual';
@@ -216,7 +213,24 @@ export async function runScan() {
   }
 }
 
+let installing = false;
+export function setInstalling(on) { installing = on; paintUpdateBar(); }
+
+// Полоса вверху: новая версия готова, одна кнопка. Видна на любой вкладке.
+export function paintUpdateBar() {
+  const bar = $('#upbar');
+  const u = S.status?.update;
+  if (!bar) return;
+  const show = !!(u?.available && u.can_install) || installing;
+  bar.hidden = !show;
+  if (!show) return;
+  paint(bar, installing
+    ? html`<span><b>Устанавливаю обновление…</b> Окно закроется и откроется само.</span><button type="button" disabled>Подождите</button>`
+    : html`<span><b>Есть новая версия ${u.latest}.</b> Нажмите, и программа обновится сама, данные сохранятся.</span><button type="button" data-act="update-install">Обновить</button>`);
+}
+
 export function updateScanPill() {
+  paintUpdateBar();
   const pill = $('#scan-txt');
   if (!pill) return;
   const last = S.status?.scan.last?.at;

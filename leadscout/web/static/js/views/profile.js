@@ -5,7 +5,7 @@ import { S, cache, loadNotif, loadProfile, loadStatus } from '../state.js';
 import { $, closeSheet, debounce, esc, html, I, money, openSheet, paint, plural, raw, ring, sheetHead, toast } from '../ui.js';
 import { openChats } from './chats.js';
 import { openConnect, setAiControl } from './connect.js';
-import { refreshFeed } from './feed.js';
+import { refreshFeed, setInstalling } from './feed.js';
 
 const PAY = [['fixed', 'Фикс за проект'], ['hourly', 'Почасовая'], ['retainer', 'Абонемент']];
 const CAP = [['free', 'Свободен'], ['busy', 'Немного занят'], ['full', 'Занят']];
@@ -454,7 +454,8 @@ export const profileActions = {
   },
   'update-install': async () => {
     toast('Скачиваю обновление. Программа закроется и откроется заново.');
-    await post('/update/install');
+    setInstalling(true);
+    try { await post('/update/install'); } catch (e) { setInstalling(false); throw e; }
     paint($('#view'), html`<section class="view"><div class="glass field" style="margin-top:24px"><h3 class="ready-t">Устанавливаю обновление</h3><p class="lead-p">Окно закроется само, через несколько секунд Scout откроется уже новой версии. Если не открылся, нажмите на значок Scout.</p></div></section>`);
   },
   'quit-app': async () => {
