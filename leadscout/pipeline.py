@@ -175,11 +175,12 @@ class Pipeline:
             return None
         verdict = None if force else self._verdicts.pop((raw.chat_id, raw.tg_msg_id), None)
         if not force and (ex.is_supply(text) or ex.is_chat_rules(text)):
-            store.set_message_status(self.db, mid, "noise")  # исполнитель предлагает себя и правила чата: ИИ их даже не читает
+            kind = "rules" if ex.is_chat_rules(text) else "offer"  # исполнитель предлагает себя или правила чата: ИИ их даже не читает
+            store.set_message_status(self.db, mid, "noise", f"rule:{kind}")
             return None
         if verdict is not None:
             if not (verdict.order and (self._recall() or not verdict.unsure)):
-                store.set_message_status(self.db, mid, "noise")
+                store.set_message_status(self.db, mid, "noise", f"ai:{verdict.kind if not verdict.order else 'chat'}")
                 return None
             strict = lenient = True
         else:

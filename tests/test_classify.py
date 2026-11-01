@@ -257,3 +257,15 @@ def test_ai_is_shown_the_examples_most_similar_to_what_it_reads(db):
     assert any("нотариуса" in t for t in no), "самый похожий пример попадает в подсказку, даже если он не самый свежий"
     yes, no2 = classify.examples(db)
     assert len(yes) == classify.SHOW_EACH and not any("нотариуса" in t for t in no2)  # без пачки берутся самые свежие
+
+
+def test_discarded_list_says_who_decided_and_why(ai_pipe, chat_id):
+    from .test_supply import TECH
+
+    run(ingest(ai_pipe, chat_id, [QUIET, TECH, ORDER]))
+    notes = {r["note"] for r in ai_pipe.db.all("SELECT note FROM messages WHERE status='noise'")}
+    assert notes == {"ai:chat", "rule:offer"}
+    assert store.why_discarded("ai:chat") == "ИИ: обсуждение"
+    assert store.why_discarded("rule:offer") == "по правилам: предложение услуг"
+    assert store.why_discarded(None) == "не похоже на заказ"
+    assert store.why_discarded("ai:unknownkind") == "не похоже на заказ"

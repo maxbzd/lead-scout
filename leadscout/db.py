@@ -144,7 +144,10 @@ CREATE TABLE IF NOT EXISTS scan_runs (
 );
 """
 
-MIGRATIONS: list[str] = [SCHEMA_V1]
+MIGRATIONS: list[str] = [
+    SCHEMA_V1,
+    "ALTER TABLE messages ADD COLUMN note TEXT;",  # почему сообщение не стало заказом: ai:offer, rule:rules и т. п.
+]
 
 JSON_COLUMNS = {"skills", "fit", "red_flags", "author_flags", "payload"}
 
