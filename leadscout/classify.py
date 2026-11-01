@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .db import Database
+from .extract import similarity
 from .profile import Profile
 from .util import clip, squash
 
@@ -88,12 +89,19 @@ def teach(db: Database, text: str, is_order: bool) -> None:
     db.set_setting(EXAMPLES_KEY, items[-MAX_EXAMPLES:])
 
 
-def examples(db: Database) -> tuple[list[str], list[str]]:
-    """(настоящие заказы, не заказы): самые свежие."""
+def examples(db: Database, texts: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """(настоящие заказы, не заказы). Для читаемой пачки берём самые похожие на неё примеры, иначе самые свежие:
+    так ИИ видит ваше решение именно про такой тип сообщений (например, шаблонные объявления исполнителей одного чата)."""
     items = db.get_setting(EXAMPLES_KEY, []) or []
-    yes = [i["t"] for i in items if i.get("y")][-SHOW_EACH:]
-    no = [i["t"] for i in items if not i.get("y")][-SHOW_EACH:]
-    return yes, no
+
+    def pick(want: bool) -> list[str]:
+        pool = [i["t"] for i in items if bool(i.get("y")) is want]
+        if not texts or len(pool) <= SHOW_EACH:
+            return pool[-SHOW_EACH:]
+        ranked = sorted(range(len(pool)), key=lambda n: (max(similarity(pool[n], t) for t in texts), n), reverse=True)
+        return [pool[n] for n in sorted(ranked[:SHOW_EACH])]  # порядок показа: от старых к новым
+
+    return pick(True), pick(False)
 
 
 # ------------------------------------------------------------ подсказка ----
