@@ -201,3 +201,105 @@ def test_api_providers_and_status(authed):
 
 
 _ = rtm  # модуль нужен подмене клиента
+
+
+# ------------------------------------------------------------- несколько ключей ----
+def multi(handler, keys, db=None, rpd=1000):
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return OpenAICompatLLM("https://api.example.com/v1", keys, "m1", db=db, client=client, rpm=6000, rpd=rpd)
+
+
+async def ask(m):
+    return await m._call("m1", "s", "u", wants_json=True)
+
+
+async def test_requests_are_spread_evenly_across_keys(db):
+    used = []
+    m = multi(lambda req: (used.append(req.headers["authorization"]) or answer("{}")), ["key-aaaaaaaa", "key-bbbbbbbb", "key-cccccccc"], db=db)
+    for _ in range(9):
+        await ask(m)
+    assert {u: used.count(u) for u in set(used)} == {"Bearer key-aaaaaaaa": 3, "Bearer key-bbbbbbbb": 3, "Bearer key-cccccccc": 3}
+    assert m.used_today() == 9 and m.rpd == 3000
+    assert [k["used"] for k in m.key_states()] == [3, 3, 3]
+
+
+async def test_limited_key_is_skipped_and_the_same_request_is_retried_on_another(db):
+    seen = []
+
+    def handler(req):
+        seen.append(req.headers["authorization"])
+        return httpx.Response(429, headers={"retry-after": "60"}, json={}) if req.headers["authorization"].endswith("aaaaaaaa") else answer("{}")
+
+    m = multi(handler, ["key-aaaaaaaa", "key-bbbbbbbb"], db=db)
+    assert await ask(m) == "{}"  # первый ключ ответил 429, тот же вопрос ушёл со вторым
+    assert seen == ["Bearer key-aaaaaaaa", "Bearer key-bbbbbbbb"]
+    seen.clear()
+    await ask(m)
+    assert seen == ["Bearer key-bbbbbbbb"], "заблокированный ключ больше не трогаем"
+    assert [k["state"] for k in m.key_states()] == ["blocked", "ok"]
+
+
+async def test_a_rejected_key_is_marked_bad_and_the_rest_keep_working(db):
+    def handler(req):
+        return httpx.Response(403, json={}) if req.headers["authorization"].endswith("aaaaaaaa") else answer("{}")
+
+    m = multi(handler, ["key-aaaaaaaa", "key-bbbbbbbb"], db=db)
+    assert await ask(m) == "{}"
+    assert [k["state"] for k in m.key_states()] == ["bad", "ok"]
+
+
+async def test_when_every_key_is_bad_or_limited_the_error_is_clear(db):
+    m = multi(lambda req: httpx.Response(403, json={}), ["key-aaaaaaaa", "key-bbbbbbbb"], db=db)
+    with pytest.raises(LLMUnavailable, match="не подош"):
+        await ask(m)
+    with pytest.raises(LLMUnavailable, match="не подош"):
+        await ask(m)
+    limited = multi(lambda req: answer("{}"), ["key-limited-1", "key-limited-2"], db=db, rpd=2)
+    for _ in range(4):
+        await ask(limited)
+    with pytest.raises(LLMUnavailable, match="Дневной лимит"):
+        await ask(limited)
+    assert limited.rpd == 4
+
+
+async def test_keyless_own_model_still_works():
+    seen = {}
+    m = multi(lambda req: (seen.update(auth=req.headers.get("authorization")) or answer("{}")), "")
+    await ask(m)
+    assert seen["auth"] is None
+
+
+def test_keys_are_parsed_from_one_field():
+    assert rtm.parse_keys("a1\n b2 ,c3;a1\n\n") == ["a1", "b2", "c3"]
+    assert rtm.parse_keys(None) == [] and rtm.parse_keys("  ") == []
+
+
+async def test_connect_add_and_remove_keys_through_the_runtime(tmp_path, monkeypatch):
+    rt = Runtime(Settings(data_dir=tmp_path, run_worker=False))
+    probed = []
+
+    async def fake_probe(base_url, keys, model, rpm, rpd, provider):
+        probed.append(list(keys))
+        if any(k.startswith("bad") for k in keys):
+            raise LLMUnavailable("Ключ ИИ не подошёл")
+
+    monkeypatch.setattr(Runtime, "_probe_keys", staticmethod(fake_probe))
+    await rt.connect_ai("gemini", "AIza-key-one\nAIza-key-two", "", "")
+    assert rt.ai_keys() == ["AIza-key-one", "AIza-key-two"]
+    st = rt.llm_status()
+    assert st["mode"] == "ai" and len(st["keys"]) == 2 and st["limit_today"] == 2 * 900
+    assert "AIza-key-one" not in str(st), "ключи в статусе только в виде маски"
+    await rt.add_ai_key("AIza-key-three")
+    assert len(rt.ai_keys()) == 3 and probed[-1] == ["AIza-key-three"]
+    with pytest.raises(LLMUnavailable, match="уже добавлен"):
+        await rt.add_ai_key("AIza-key-three")
+    with pytest.raises(LLMUnavailable, match="не подошёл"):
+        await rt.add_ai_key("bad-key-12345")
+    assert len(rt.ai_keys()) == 3
+    rt.remove_ai_key(0)
+    assert rt.ai_keys() == ["AIza-key-two", "AIza-key-three"] and rt.llm_status()["limit_today"] == 2 * 900
+    with pytest.raises(LLMUnavailable):
+        rt.remove_ai_key(9)
+    rt.remove_ai_key(0)
+    rt.remove_ai_key(0)
+    assert rt.llm_status()["mode"] == "rules", "убрали последний ключ: ИИ выключается"
