@@ -493,3 +493,10 @@ html, body { overflow-x: clip; }
   body:not([data-tab="feed"]) .dock-empty, body:has(.veil.docked:not([hidden])) .dock-empty { display: none; }
 }
 @keyframes dockin { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* разделы профиля */
+.psegs { margin: 0 0 4px; }
+.psegs button { flex: 1; }
+.psec[hidden] { display: none; }
+.psec { display: grid; gap: 14px; }
+.psegs button[aria-selected="true"] { background: rgba(255, 255, 255, .14); color: #fff; }
