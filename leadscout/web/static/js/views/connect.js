@@ -79,7 +79,7 @@ function view() {
         ${field('api-hash', 'api_hash', { ph: '32 символа из букв и цифр' })}
         ${err()}
         <div class="btnrow one"><button class="btn pri" type="button" data-act="tg-api" ${busyAttr()}>Дальше</button></div>
-        <p class="mono note-sm">Ключи хранятся на вашем сервере в зашифрованном виде.</p>`;
+        <p class="mono note-sm">Ключи хранятся только у вас, в зашифрованном виде.</p>`;
     case 'tg-phone':
       return html`${sheetHead('Подключаем Telegram', 'шаг 2 из 3')}${steps(2, 3)}
         <p class="lead-p">Введите номер, на который зарегистрирован Telegram. Код придёт в само приложение Telegram, в чат «Telegram».</p>

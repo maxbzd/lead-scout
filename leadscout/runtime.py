@@ -242,7 +242,7 @@ class Runtime:
             try:
                 await asyncio.wait_for(reader.start(), START_TIMEOUT)  # без связи с Telegram приложение всё равно открывается
             except TimeoutError:
-                reader.state, reader.error = "error", "Telegram не отвечает. Проверьте интернет на сервере"
+                reader.state, reader.error = "error", "Telegram не отвечает. Проверьте интернет"
             self.source = reader
         elif self.demo_enabled():
             demo = DemoSource(self.db)

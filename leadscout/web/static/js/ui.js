@@ -147,22 +147,27 @@ function setBackdropInert(on) {
 let pendingBack = false; // кнопка «назад» закрывает шторку, а не приложение
 
 
-export function openSheet(content, { onClose, wide = false } = {}) {
+// На широком экране компьютера карточка заказа открывается справа от списка и не закрывает его
+export const isWide = () => window.matchMedia('(min-width: 1200px)').matches;
+
+export function openSheet(content, { onClose, wide = false, docked = false } = {}) {
   const veil = document.getElementById('veil');
   const sheet = document.getElementById('sheet');
+  const dock = docked && isWide();
   document.getElementById('toast')?.classList.remove('on');
   if (!veil.hidden) stack.pop()?.onClose?.(); // новая шторка поверх открытой заменяет её
   paint(sheet, html`<div class="grab"></div>${content}`);
   sheet.classList.toggle('wide', wide);
-  if (veil.hidden) lastFocus = document.activeElement;
+  if (veil.hidden && !dock) lastFocus = document.activeElement;
+  veil.classList.toggle('docked', dock);
   veil.hidden = false;
-  setBackdropInert(true);
-  document.body.style.overflow = 'hidden';
+  setBackdropInert(!dock);
+  document.body.style.overflow = dock ? '' : 'hidden';
   sheet.scrollTop = 0;
-  if (!pendingBack && !history.state?.sheet) history.pushState({ sheet: 1 }, '');
+  if (!dock && !pendingBack && !history.state?.sheet) history.pushState({ sheet: 1 }, '');
   stack.push({ onClose });
   const first = sheet.querySelector('[data-autofocus]');
-  if (first) setTimeout(() => first.focus(), 60);
+  if (first && !dock) setTimeout(() => first.focus(), 60);
   return sheet;
 }
 
@@ -177,6 +182,7 @@ export function closeSheet({ fromPop = false } = {}) {
   const veil = document.getElementById('veil');
   if (veil.hidden) return;
   veil.hidden = true;
+  veil.classList.remove('docked');
   setBackdropInert(false);
   document.body.style.overflow = '';
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus?.({ preventScroll: true });
