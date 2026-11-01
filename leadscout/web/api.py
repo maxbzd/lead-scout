@@ -607,6 +607,7 @@ class AiControlIn(BaseModel):
     paused: bool | None = None
     auto: bool | None = None
     limit: int | None = Field(default=None, ge=5, le=500)
+    unlimited: bool | None = None  # снять лимиты приложения (запросов в день и за проверку)
 
 
 @router.put("/ai/control")

@@ -21,6 +21,7 @@ from .util import iso, minutes_ago, now_utc
 
 log = logging.getLogger("leadscout.pipeline")
 
+CLASSIFY_PARALLEL = 4
 DUP_THRESHOLD = 0.72
 SAME_AUTHOR_THRESHOLD = 0.45
 SAME_CHAT_THRESHOLD = 0.85  # в одном чате похожий текст чаще всего другая задача, а не повтор
@@ -61,6 +62,8 @@ class Pipeline:
 
     def _classify_budget(self) -> int:
         """Сколько запросов на чтение пачками можно потратить сейчас. У бесплатного ИИ суточный лимит: часть бережём на оценки и отклики."""
+        if ai_control.load(self.db)["unlimited"]:
+            return 10**6  # лимиты приложения сняты по вашей просьбе
         primary = getattr(self.llm, "primary", None)
         rpd = getattr(primary, "rpd", None)
         if not rpd:
@@ -89,24 +92,33 @@ class Pipeline:
         # сначала свежие: при нехватке запросов ИИ прочитает новое, а старое разберут правила
         heads = sorted((g[0] for g in groups.values()), key=lambda r: r.posted_at, reverse=True)
         heads = heads[: self._classify_budget() * classify.BATCH]
-        total = -(-len(heads) // classify.BATCH)
-        try:
-            for n, i in enumerate(range(0, len(heads), classify.BATCH)):
-                part = heads[i: i + classify.BATCH]
-                if total > 1:
-                    self._progress((n, total))
+        parts = [heads[i: i + classify.BATCH] for i in range(0, len(heads), classify.BATCH)]
+        done = 0
+        gate = asyncio.Semaphore(CLASSIFY_PARALLEL)  # несколько пачек в полёте: ждать ответ можно одновременно, скорость в минуту держит сам ИИ-клиент
+
+        async def read(part: list[RawMessage]) -> None:
+            nonlocal done
+            async with gate:
                 batch = [(r.text or "").strip() for r in part]
                 yes, no = classify.examples(self.db, batch)
                 try:
                     verdicts = await self.llm.classify(batch, profile, yes, no)
                 except Exception:
                     log.exception("classify failed, rules decide")
-                    return
+                    verdicts = [None] * len(part)
                 for head, v in zip(part, verdicts, strict=True):
                     if v is None:
                         continue
                     for r in groups[ex.content_hash((head.text or "").strip())]:
                         self._verdicts[(r.chat_id, r.tg_msg_id)] = v
+                done += 1
+                if len(parts) > 1:
+                    self._progress((done, len(parts)))
+
+        try:
+            if len(parts) > 1:
+                self._progress((0, len(parts)))
+            await asyncio.gather(*(read(p) for p in parts))
         finally:
             self._progress(None)
 
