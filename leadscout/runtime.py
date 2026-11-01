@@ -24,7 +24,15 @@ from .pipeline import Pipeline
 from .profile import load_profile
 from .secrets_store import Secrets
 from .sources.demo import DemoSource
-from .sources.telegram import LoginError, TelegramLogin, TelegramProblem, TelegramReader, revoke_session
+from .sources.telegram import (
+    DEFAULT_LOOKBACK,
+    LOOKBACK_CHOICES,
+    LoginError,
+    TelegramLogin,
+    TelegramProblem,
+    TelegramReader,
+    revoke_session,
+)
 from .updater import Updater
 from .util import iso, now_utc, parse_iso
 
@@ -85,6 +93,17 @@ class Runtime:
         if isinstance(v, int) and (v == 0 or 2 <= v <= 1440):
             return v
         return 0 if self.settings.local else self.settings.scan_minutes  # на своём компьютере по умолчанию проверка по кнопке
+
+    @property
+    def lookback_hours(self) -> int:
+        v = self.db.get_setting("lookback_hours")
+        return v if v in LOOKBACK_CHOICES else DEFAULT_LOOKBACK
+
+    def set_lookback_hours(self, hours: int) -> None:
+        self.db.set_setting("lookback_hours", int(hours))
+        if isinstance(self.source, TelegramReader):
+            self.source.lookback_hours = self.lookback_hours
+        self.bus.publish({"type": "status"})
 
     @property
     def manual(self) -> bool:
@@ -292,6 +311,7 @@ class Runtime:
             reader = TelegramReader(self.db, *creds)
             reader.listener = self.ingest_one
             reader.live = 0 < self.scan_minutes <= 15
+            reader.lookback_hours = self.lookback_hours
             try:
                 await asyncio.wait_for(reader.start(), START_TIMEOUT)  # без связи с Telegram приложение всё равно открывается
             except TimeoutError:
@@ -551,7 +571,8 @@ class Runtime:
         if self.settings.run_worker and self.source is not None:
             elapsed = time.monotonic() - self._last_scan_mono if self._last_scan_mono else 0
             nxt = max(0, int(self.scan_minutes * 60 - elapsed)) if self.scan_minutes else None
-        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes, "progress": self.pipeline.progress}
+        return {"running": self.scanning, "last": last, "next_in": nxt, "every_min": self.scan_minutes, "progress": self.pipeline.progress,
+                "lookback_hours": self.lookback_hours}
 
     # ---------------------------------------------------- расписание ----
     async def _loop(self) -> None:

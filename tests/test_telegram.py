@@ -17,6 +17,8 @@ from leadscout.sources.telegram import (
 )
 from leadscout.util import iso
 
+from .conftest import H
+
 
 def user(**kw):
     base = {"id": 7, "first_name": "Иван", "last_name": "К", "username": "ivan_k", "bot": False}
@@ -127,8 +129,8 @@ async def test_first_scan_takes_recent_messages_oldest_first(db):
     client = FakeClient([msg(1, "старое", minutes_ago=60 * 24 * 10), msg(2, "раз", 50), msg(3, "два", 10),
                          msg(4, "служебное", 5, action=object())])
     out = await reader(db, client)._fetch_chat(row)
-    assert [m.text for m in out] == ["раз", "два"]  # старше 72 часов и служебные отброшены, порядок от старых к новым
-    assert client.calls[0]["limit"] == tg.FIRST_SCAN_LIMIT and client.calls[0]["min_id"] is None
+    assert [m.text for m in out] == ["раз", "два"]  # старше срока чтения и служебные отброшены, порядок от старых к новым
+    assert client.calls[0]["limit"] == tg.FIRST_SCAN_LIMIT * 3 and client.calls[0]["min_id"] is None  # срок по умолчанию неделя
 
 
 async def test_catchup_reads_only_after_cursor(db):
@@ -373,3 +375,29 @@ async def test_live_handler_is_silent_when_checks_are_rare(db):
     r.live = True
     await r._on_new(event)
     assert len(got) == 1
+
+
+async def test_after_a_week_off_everything_since_the_last_check_is_read_up_to_the_lookback(db):
+    row = chat_row(db)
+    db.run("UPDATE chats SET last_msg_id=50, last_scan_at=? WHERE id=?", (iso(datetime.now(UTC) - timedelta(days=6)), row["id"]))
+    row = db.one("SELECT * FROM chats WHERE id=?", (row["id"],))
+    client = FakeClient([msg(60, "свежее", 3)])
+    r = reader(db, client)
+    assert r.lookback_hours == 168  # по умолчанию неделя
+    await r._fetch_chat(row)
+    start = client.calls[0]["offset_date"]
+    assert abs((datetime.now(UTC) - start) - timedelta(days=6, minutes=10)) < timedelta(minutes=2), "читаем с последней проверки, а не только последние 3 дня"
+    r.lookback_hours = 24
+    client2 = FakeClient([msg(61, "свежее", 3)])
+    r.client = client2
+    await r._fetch_chat(row)
+    assert abs((datetime.now(UTC) - client2.calls[0]["offset_date"]) - timedelta(hours=24)) < timedelta(minutes=2), "срок короче перерыва: читаем только его"
+
+
+def test_lookback_is_configurable_and_validated(authed):
+    rt = authed.app.state.rt
+    assert authed.get("/api/status").json()["scan"]["lookback_hours"] == 168
+    assert authed.put("/api/settings/lookback", json={"hours": 72}, headers=H).json()["scan"]["lookback_hours"] == 72
+    assert rt.lookback_hours == 72
+    assert authed.put("/api/settings/lookback", json={"hours": 5}, headers=H).status_code == 422
+    assert tg.TelegramReader(rt.db, 1, "h", "s").first_limit() == tg.FIRST_SCAN_LIMIT * 3
