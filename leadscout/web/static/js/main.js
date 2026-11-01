@@ -6,7 +6,7 @@ import { $, $$, closeSheet, debounce, html, I, isWide, onPopState, paint, sheetH
 import { chatActions } from './views/chats.js';
 import { connectActions } from './views/connect.js';
 import { detailActions, openOrder, priceActions } from './views/detail.js';
-import { currentSel, feedActions, moveSel, onNewOrders, refreshFeed, renderFeed, runScan, updateScanPill } from './views/feed.js';
+import { currentSel, feedActions, handlePick, moveSel, onNewOrders, pickMode, refreshFeed, renderFeed, runScan, startPick, togglePick, updateScanPill } from './views/feed.js';
 import { onProfileInput, profileActions, renderProfile } from './views/profile.js';
 import { renderStats, statsActions } from './views/stats.js';
 
@@ -57,6 +57,7 @@ async function show(tab, { push = true } = {}) {
   if (!TABS.includes(tab)) tab = 'feed';
   S.tab = tab;
   document.body.dataset.tab = tab;
+  if (tab !== 'feed') startPick(false);
   $$('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.v === tab)));
   $('#search-btn').hidden = tab !== 'feed';
   if (tab !== 'feed') $('#sbar').hidden = true;
@@ -147,6 +148,7 @@ const ACTIONS = {
 };
 
 function onClick(e) {
+  if (handlePick(e)) return;
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
   const fn = ACTIONS[el.dataset.act];
@@ -170,6 +172,7 @@ function shortcut(e) {
       break;
     }
     case 'Enter': case 'o': { const id = currentSel(); if (id == null) return false; openOrder(id).catch(() => {}); break; }
+    case 'x': { const id = currentSel(); if (id == null) return false; togglePick(id); break; }
     case 's': act('bm'); break;
     case 'u': act('up'); break;
     case 'd': act('dn'); break;
@@ -183,6 +186,7 @@ function shortcut(e) {
 
 function onKey(e) {
   if (e.key === 'Escape' && sheetOpen()) { closeSheet(); return; }
+  if (e.key === 'Escape' && pickMode()) { startPick(false); return; }
   if (shortcut(e)) return;
   const t = e.target;
   if (e.key === 'Enter' && !e.shiftKey && t.tagName === 'INPUT') {

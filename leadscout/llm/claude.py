@@ -330,7 +330,8 @@ class ClaudeLLM:
             f"Как берёт оплату: {', '.join(profile.pay_types) or 'не указано'}\n"
             f"Стоп-слова (такие заказы не нужны): {', '.join(profile.stop_words) or 'нет'}\n"
             f"О себе: {profile.bio or 'не указано'}\n"
-            f"Примеры работ: {cases}"
+            + (f"Какие заказы нужны и какие нет (слова самого фрилансера, важнее общих правил): {clip(profile.criteria.strip(), 1500)}\n" if profile.criteria.strip() else "")
+            + f"Примеры работ: {cases}"
         )
 
     @staticmethod

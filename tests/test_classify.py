@@ -269,3 +269,13 @@ def test_discarded_list_says_who_decided_and_why(ai_pipe, chat_id):
     assert store.why_discarded("rule:offer") == "по правилам: предложение услуг"
     assert store.why_discarded(None) == "не похоже на заказ"
     assert store.why_discarded("ai:unknownkind") == "не похоже на заказ"
+
+
+def test_your_own_words_about_wanted_orders_reach_both_ai_prompts():
+    prof = Profile(skills=["боты"], criteria="Нужны боты для бизнеса. Не нужны сайты на Тильде и вакансии в штат.")
+    system, _ = classify.build_prompt(["текст"], prof, [], [])
+    assert "Не нужны сайты на Тильде" in system and "главнее общих правил" in system
+    from leadscout.llm.claude import ClaudeLLM
+
+    assert "Не нужны сайты на Тильде" in ClaudeLLM._profile_block(prof)
+    assert "СЛОВА САМОГО ФРИЛАНСЕРА" not in classify.build_prompt(["текст"], Profile(), [], [])[0]

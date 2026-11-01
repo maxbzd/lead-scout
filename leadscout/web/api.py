@@ -15,7 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import autostart, learning, present, stats, store
+from .. import autostart, diagnostics, learning, present, stats, store
 from ..bot import BotError
 from ..cloud import CloudError
 from ..llm.base import LLMUnavailable
@@ -167,6 +167,49 @@ def _discarded_feed(rt: Runtime, q: str, limit: int) -> dict:
     counts, hot_sum = _counts(rt)
     return {"items": items, "counts": counts, "hot_sum": hot_sum, "kind": "messages",
             "total_read": rt.db.scalar("SELECT COUNT(*) FROM messages WHERE posted_at>=?", (rt.since(7 * 24 * 60),), 0)}
+
+
+class DeleteIn(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=2000)
+    all: bool = False  # удалить всё во вкладке
+    filter: str = "all"
+    q: str = ""
+    notorder: bool = False  # заодно сказать ИИ: это были не заказы
+
+
+def _filter_ids(rt: Runtime, filter: str, q: str) -> list[int]:
+    where = FILTERS.get(filter, FILTERS["all"])
+    args: list = []
+    if q.strip():
+        where += (" AND (ulower(o.title) LIKE ? ESCAPE '\\' OR ulower(o.summary) LIKE ? ESCAPE '\\' "
+                  "OR ulower(m.text) LIKE ? ESCAPE '\\' OR ulower(c.title) LIKE ? ESCAPE '\\')")
+        needle = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        args += [f"%{needle}%"] * 4
+    if filter not in {"saved", "offered", "rated"}:
+        where += " AND o.state!='saved' AND o.offered_at IS NULL AND o.stage IS NULL"  # «удалить всё» не трогает отложенное и то, на что вы откликнулись
+    return [r["id"] for r in rt.db.all(store.ORDER_SELECT + f" WHERE {where}", args)]
+
+
+@router.post("/orders/delete")
+def delete_orders(body: DeleteIn, request: Request) -> dict:
+    """Удалить заказы: выбранные или все во вкладке. «Не заказ» заодно учит ИИ."""
+    rt = rt_of(request)
+    ids = _filter_ids(rt, body.filter, body.q) if body.all else body.ids
+    gone = store.delete_orders(rt.db, ids)
+    if body.notorder:
+        for r in gone:
+            rt.pipeline.teach(r["text"] or "", False)
+    rt.bus.publish({"type": "orders", "ids": []})
+    return {"deleted": len(gone)}
+
+
+@router.post("/discarded/delete")
+def delete_discarded(body: DeleteIn, request: Request) -> dict:
+    rt = rt_of(request)
+    ids = [r["id"] for r in store.list_discarded(rt.db, body.q.strip(), 100000)] if body.all else body.ids
+    n = store.delete_messages(rt.db, ids)
+    rt.bus.publish({"type": "orders", "ids": []})
+    return {"deleted": n}
 
 
 @router.post("/discarded/{message_id}/promote")
@@ -684,6 +727,15 @@ def set_autostart(body: AutostartIn, request: Request) -> dict:
     except OSError as e:
         raise UpdateError("Windows не разрешил изменить автозапуск") from e
     return {"supported": True, "enabled": autostart.enabled()}
+
+
+@router.get("/export/ai")
+def export_ai(request: Request, redact: int = 1, limit: int = 250, days: int = 7) -> JSONResponse:
+    """Выгрузка работы ИИ для разбора ошибок: подсказки, решения по сообщениям, ваши исправления."""
+    rt = _local(request)
+    data = diagnostics.build(rt, hide=bool(redact), limit=limit, days=max(1, min(60, days)))
+    name = f"scout-ai-report-{datetime.now().strftime('%Y-%m-%d')}.json"
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/backup")

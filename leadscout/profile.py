@@ -27,6 +27,7 @@ class Profile(BaseModel):
     day_rate: int = Field(default=6000, ge=0, le=1_000_000)
     stop_words: list[str] = Field(default_factory=lambda: ["бесплатно", "залог", "тестовое без оплаты", "mlm"])
     bio: str = Field(default="", max_length=600)
+    criteria: str = Field(default="", max_length=2000)  # своими словами: какие заказы нужны и какие нет; ИИ учитывает это в каждом решении
     cases: list[Case] = Field(default_factory=list)
     tone: str = "warm"
     capacity: str = "free"

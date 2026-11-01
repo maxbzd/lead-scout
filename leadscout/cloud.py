@@ -37,6 +37,7 @@ TONES = ("short", "warm", "formal")
 ALLOWED = [
     ("POST", re.compile(r"^/orders/\d+/(feedback|save|offer|stage|restore)$")),
     ("POST", re.compile(r"^/discarded/\d+/promote$")),
+    ("POST", re.compile(r"^/(orders|discarded)/delete$")),
     ("POST", re.compile(r"^/scan$")),
     ("POST", re.compile(r"^/suggestions/\d+$")),
     ("PUT", re.compile(r"^/(profile|notifications|ai/control|settings/scan)$")),

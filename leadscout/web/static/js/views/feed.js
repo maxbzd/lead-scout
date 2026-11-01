@@ -2,7 +2,7 @@
 
 import { get, post } from '../api.js';
 import { S, loadFeed, loadStatus, replaceCard } from '../state.js';
-import { $, copyText, esc, html, I, openLink, paint, plural, raw, ring, safeUrl, toast, money } from '../ui.js';
+import { $, closeSheet, copyText, esc, html, I, openLink, openSheet, paint, plural, raw, ring, safeUrl, sheetHead, toast, money } from '../ui.js';
 import { askWhy, giveFeedback, openOrder } from './detail.js';
 import { openConnect, setAiControl } from './connect.js';
 import { openChats } from './chats.js';
@@ -21,7 +21,7 @@ export function renderFeed() {
       <div class="scan"><span class="mono" id="scan-note"></span><div class="bar"><i></i></div></div>
       <div id="manual-cta"></div>
       <div class="chips" id="filters" role="group" aria-label="Фильтр"></div>
-      <div class="sortrow"><span class="mono" id="shown"></span><div class="seg" id="sort" role="group" aria-label="Сортировка"></div></div>
+      <div class="sortrow"><span class="mono" id="shown"></span><button class="linkish pick-btn" type="button" id="pick-btn" data-act="pick-toggle">Выбрать</button><div class="seg" id="sort" role="group" aria-label="Сортировка"></div></div>
       <div class="list anim" id="list" aria-live="polite"></div>
     </section>`);
   paintAll(true);
@@ -134,6 +134,7 @@ export function cardHtml(o, i = 0) {
   else go = html`<button class="go" type="button" data-act="quick-offer" data-id="${o.id}">${I.send}Предложить</button>`;
   return html`
     <article class="card${o.hot ? ' hot' : ''}${o.verdict === 'scam' ? ' scam' : ''}" data-id="${o.id}" style="--i:${i}">
+      <i class="pickmark" aria-hidden="true"></i>
       <div class="meta">${ageHtml(o)}<span>${o.source}</span>${dup}${o.demo ? html`<span class="demo-tag">демо</span>` : ''}</div>
       <div class="row1" data-act="open" data-id="${o.id}" role="button" tabindex="0">
         ${ring(o.score, 56, 4.5)}
@@ -173,6 +174,7 @@ function emptyState() {
 function discardedHtml(m) {
   const link = safeUrl(m.link);
   return html`<article class="card muted-card" data-id="${m.id}">
+    <i class="pickmark" aria-hidden="true"></i>
     <div class="meta"><span class="age"><i></i>${m.age_label}</span><span>${m.chat}</span>${m.demo ? html`<span class="demo-tag">демо</span>` : ''}</div>
     <p class="raw-text">${m.text}</p>
     ${m.author ? html`<p class="mono note-sm" style="margin-top:8px">${m.author}</p>` : ''}
@@ -198,6 +200,7 @@ export function paintList(anim = false) {
   const draw = S.filter === 'discarded' ? (o) => discardedHtml(o) : cardHtml;
   paint(list, items.length ? items.map((o, i) => draw(o, i)) : emptyState());
   markSel();
+  markPicked();
 }
 
 export async function refreshFeed({ anim = false } = {}) {
@@ -253,6 +256,103 @@ export function paintUpdateBar() {
     ? html`<span><b>Устанавливаю обновление…</b> Окно закроется и откроется само.</span><button type="button" disabled>Подождите</button>`
     : html`<span><b>Есть новая версия ${u.latest}.</b> Нажмите, и программа обновится сама, данные сохранятся.</span><button type="button" data-act="update-install">Обновить</button>`);
 }
+
+// ---------------------------------------------------- выбор и удаление ----
+let pick = null; // Set номеров выбранных карточек; null: обычный режим
+export const pickMode = () => pick !== null;
+
+function shownIds() {
+  return (S.feed?.items || []).map((o) => o.id);
+}
+
+export function markPicked() {
+  const list = $('#list');
+  if (list) list.classList.toggle('picking', pick !== null);
+  document.querySelectorAll('.card[data-id]').forEach((c) => c.classList.toggle('picked', pick !== null && pick.has(+c.dataset.id)));
+  const btn = $('#pick-btn');
+  if (btn) btn.textContent = pick ? 'Готово' : 'Выбрать';
+  const bar = $('#selbar');
+  if (!bar) return;
+  bar.hidden = pick === null;
+  if (pick === null) return;
+  const total = S.feed?.counts?.[S.filter] ?? shownIds().length;
+  const disc = S.filter === 'discarded';
+  paint(bar, html`<div class="selrow"><b>${pick.size ? `Выбрано ${pick.size}` : 'Отметьте карточки'}</b><span class="mono">показано ${shownIds().length}</span>
+      <button type="button" class="linkish" data-act="pick-all">${pick.size === shownIds().length && pick.size ? 'Снять' : 'Все'}</button></div>
+    <div class="selrow btns">
+      ${disc ? '' : html`<button type="button" class="btn small" data-act="pick-notorder" ${pick.size ? '' : raw('disabled')}>Это не заказ</button>`}
+      <button type="button" class="btn small danger" data-act="pick-del" ${pick.size ? '' : raw('disabled')}>Удалить</button>
+      <button type="button" class="linkish" data-act="pick-everything">Всё во вкладке${typeof total === 'number' ? ` (${total})` : ''}</button>
+    </div>`);
+}
+
+export function startPick(on = pick === null) {
+  pick = on ? new Set() : null;
+  markPicked();
+}
+
+export function togglePick(id) {
+  if (pick === null) startPick(true);
+  pick.has(id) ? pick.delete(id) : pick.add(id);
+  markPicked();
+}
+
+// В режиме выбора нажатие на карточку отмечает её, а не открывает
+export function handlePick(e) {
+  if (pick === null) return false;
+  const card = e.target.closest('.card[data-id]');
+  if (!card || e.target.closest('a')) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  togglePick(+card.dataset.id);
+  return true;
+}
+
+function confirmDelete({ title, text, notorder, run }) {
+  askDelete = { notorder, run };
+  openSheet(html`${sheetHead(title)}<p class="lead-p">${text}</p>
+    <div class="btnrow"><button class="btn" type="button" data-act="close">Отмена</button><button class="btn danger" type="button" data-act="pick-confirm" data-autofocus>${notorder ? 'Это не заказ, удалить' : 'Удалить'}</button></div>`);
+}
+let askDelete = null;
+
+async function doDelete(body) {
+  const disc = S.filter === 'discarded';
+  const r = await post(disc ? '/discarded/delete' : '/orders/delete', body);
+  startPick(false);
+  toast(r.deleted ? `Удалено: ${r.deleted}` : 'Ничего не удалено');
+  await refreshFeed();
+}
+
+export const pickActions = {
+  'pick-toggle': () => startPick(),
+  'pick-all': () => {
+    const ids = shownIds();
+    pick = pick && pick.size === ids.length ? new Set() : new Set(ids);
+    markPicked();
+  },
+  'pick-del': () => {
+    const ids = [...pick];
+    confirmDelete({ title: `Удалить ${ids.length} ${plural(ids.length, 'заказ', 'заказа', 'заказов')}?`, text: 'Это нельзя отменить. Сообщения из чатов заново в ленту не вернутся.', run: () => doDelete({ ids }) });
+  },
+  'pick-notorder': () => {
+    const ids = [...pick];
+    confirmDelete({ title: `Это не заказы (${ids.length})?`, text: 'Они будут удалены, а ИИ запомнит их как примеры того, что заказом не является.', notorder: true, run: () => doDelete({ ids, notorder: true }) });
+  },
+  'pick-everything': () => {
+    const n = S.feed?.counts?.[S.filter];
+    const name = (FILTERS.find(([id]) => id === S.filter) || [, 'ленте'])[1];
+    const keep = ['saved', 'offered', 'rated', 'discarded'].includes(S.filter) ? '' : ' Отложенные и те, на которые вы откликнулись, останутся.';
+    confirmDelete({ title: `Удалить всё во вкладке «${name}»?`, text: `${typeof n === 'number' ? `Будет удалено заказов: ${n}. ` : ''}Это нельзя отменить.${keep}`, run: () => doDelete({ all: true, filter: S.filter, q: S.q }) });
+  },
+  'pick-confirm': async (el) => {
+    const job = askDelete;
+    if (!job) return;
+    el.disabled = true;
+    closeSheet();
+    askDelete = null;
+    await job.run();
+  },
+};
 
 // Выбранная карточка (клавиши j/k на компьютере)
 let selId = null;
@@ -320,12 +420,13 @@ async function quickOfferNow(id) {
 }
 
 export const feedActions = {
+  ...pickActions,
   'setup-later': () => {
     try { localStorage.setItem(SNOOZE, String(Date.now() + 24 * 3600 * 1000)); } catch { /* без памяти подсказка вернётся */ }
     paintBanners();
     toast('Напомню завтра. Всё можно настроить в Профиле.');
   },
-  filter: async (el) => { S.filter = el.dataset.v; await refreshFeed({ anim: true }); window.scrollTo(0, 0); },
+  filter: async (el) => { startPick(false); S.filter = el.dataset.v; await refreshFeed({ anim: true }); window.scrollTo(0, 0); },
   sort: async (el) => { S.sort = el.dataset.v; await refreshFeed({ anim: true }); },
   open: (el) => openOrder(+el.dataset.id),
   'quick-offer': (el) => quickOffer(+el.dataset.id),
