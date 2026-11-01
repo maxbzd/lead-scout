@@ -106,8 +106,9 @@ async def test_bids_refresh_price_hint(pipe, db, chat_id):
 
 
 async def test_raise_min_suggestion_really_filters_those_orders(pipe, db, chat_id):
-    from leadscout.profile import load_profile
+    from leadscout.profile import load_profile, save_profile
 
+    save_profile(db, load_profile(db).model_copy(update={"ignore_budget": False}))
     texts = [
         "Нужен телеграм-бот для записи в барбершоп с оплатой через ЮKassa. Бюджет 30 000 ₽, срок неделя. @shop_a1",
         "Требуется промпт-инженер: настроить GPT-ассистента для интернет-магазина одежды. 30 000 руб, срок 5 дней. @shop_b2",

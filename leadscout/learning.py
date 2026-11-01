@@ -114,7 +114,7 @@ def refresh_suggestions(db: Database, profile: Profile) -> int:
     if len(low) >= 3:
         top = sorted(r["b"] for r in low)[int(len(low) * 0.75) - 1]
         new_min = int(-(-(top + 1) // 5000) * 5000)  # строго выше этих заказов, иначе порог их не отсечёт
-        if new_min >= profile.min_budget + 2500:
+        if not profile.ignore_budget and new_min >= profile.min_budget + 2500:
             key = f"min:{new_min}"
             if not has_open("raise_min", key):
                 store.add_insight(

@@ -51,17 +51,19 @@ export async function renderProfile() {
 
     <div class="glass field">
       <div class="card-head"><div class="mono">моя загрузка</div><span class="saved" id="saved">сохранено</span></div>
-      <div class="seg" id="cap" style="margin:0"></div>
-      <p class="capnote" id="cap-note"></p>
+      <div class="sw-row"><div><div class="t">Цена не важна</div><div class="s">Показываю заказы любой цены и без цены, бюджет не влияет на оценку</div></div>
+        <button class="sw" id="nobudget-sw" role="switch" aria-checked="${!!p.ignore_budget}" data-act="budget-ignore" aria-label="Цена не важна"></button></div>
+      <div class="seg money" id="cap" style="margin:0"></div>
+      <p class="capnote money" id="cap-note"></p>
       <div class="mono" style="margin-top:8px">что умеете</div>
       <div class="chips wrap" id="skills"></div>
       <div class="row-inp"><input class="inp" id="skill-in" type="text" maxlength="60" placeholder="Например: парсинг, Make, дизайн" data-enter="skill-add" autocomplete="off"><button class="btn small" type="button" data-act="skill-add">Добавить</button></div>
-      <div class="mono" style="margin-top:8px">как берёте оплату</div>
-      <div class="chips wrap" id="pay"></div>
-      <div class="mono" style="margin-top:8px">бюджет заказа от <span id="min-v" class="ink"></span></div>
-      <input id="min" type="range" min="5" max="150" step="5" aria-label="Минимальный бюджет заказа, тысяч рублей" data-bind="min">
-      <div class="mono" style="margin-top:4px">ваша ставка за день <span id="rate-v" class="ink"></span></div>
-      <input id="rate" type="range" min="1" max="30" step="0.5" aria-label="Ставка за день, тысяч рублей" data-bind="rate">
+      <div class="mono money" style="margin-top:8px">как берёте оплату</div>
+      <div class="chips wrap money" id="pay"></div>
+      <div class="mono money" style="margin-top:8px">бюджет заказа от <span id="min-v" class="ink"></span></div>
+      <input class="money" id="min" type="range" min="5" max="150" step="5" aria-label="Минимальный бюджет заказа, тысяч рублей" data-bind="min">
+      <div class="mono money" style="margin-top:4px">ваша ставка за день <span id="rate-v" class="ink"></span></div>
+      <input class="money" id="rate" type="range" min="1" max="30" step="0.5" aria-label="Ставка за день, тысяч рублей" data-bind="rate">
       <div class="mono" style="margin-top:8px">стоп-слова</div>
       <div class="chips wrap" id="stops"></div>
       <div class="row-inp"><input class="inp" id="stop-in" type="text" maxlength="60" placeholder="Заказы с этим словом не показывать" data-enter="stop-add" autocomplete="off"><button class="btn small" type="button" data-act="stop-add">Добавить</button></div>
@@ -199,6 +201,8 @@ function paintTone() {
 }
 function paintMoney() {
   const p = S.profile;
+  document.querySelectorAll('.money').forEach((el) => { el.hidden = !!p.ignore_budget; });
+  $('#nobudget-sw')?.setAttribute('aria-checked', String(!!p.ignore_budget));
   paint($('#cap'), CAP.map(([id, label]) => raw(`<button type="button" data-act="cap" data-v="${id}" aria-pressed="${p.capacity === id}">${esc(label)}</button>`)));
   const min = $('#min');
   const rate = $('#rate');
@@ -448,6 +452,7 @@ export const profileActions = {
   'connect-bot': () => openConnect('bot'),
   'connect-ai': () => openConnect('claude'),
   'connect-cloud': () => openConnect('cloud'),
+  'budget-ignore': () => { S.profile.ignore_budget = !S.profile.ignore_budget; paintMoney(); changed(); },
   psec: (el) => { S.psec = el.dataset.v; paintPsegs(); window.scrollTo(0, 0); },
   'demo-toggle': async () => {
     try {

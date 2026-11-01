@@ -42,7 +42,7 @@ async def test_scam_detected(pipe, db, chat_id):
 
 @pytest.mark.asyncio
 async def test_below_minimum_is_skipped(pipe, db, chat_id):
-    save_profile(db, Profile(recall=False))  # строгий режим
+    save_profile(db, Profile(recall=False, ignore_budget=False))  # строгий режим с порогом цены
     oid = await pipe.process(make_raw(chat_id, CHEAP))
     o = store.get_order(db, oid)
     assert o["verdict"] == "skip"
@@ -102,10 +102,10 @@ async def test_feedback_changes_learning(pipe, db, chat_id):
 async def test_rescore_after_profile_change(pipe, db, chat_id):
     oid = await pipe.process(make_raw(chat_id, N8N))
     assert store.get_order(db, oid)["verdict"] in {"match", "maybe"}
-    save_profile(db, Profile(min_budget=50000, recall=False))
+    save_profile(db, Profile(min_budget=50000, recall=False, ignore_budget=False))
     await pipe.rescore_recent()
     assert store.get_order(db, oid)["verdict"] == "skip"
-    save_profile(db, Profile(min_budget=50000, recall=True))
+    save_profile(db, Profile(min_budget=50000, recall=True, ignore_budget=False))
     await pipe.rescore_recent()
     o = store.get_order(db, oid)
     assert o["verdict"] == "maybe" and "на всякий случай" in o["why"]
@@ -122,3 +122,16 @@ async def test_draft_tones_and_variants_differ(pipe, db, chat_id):
             assert len(d["text"]) > 40
     assert len(texts) == 6
     assert len((await pipe.make_draft(oid, "short", 0))["text"]) < 260
+
+
+async def test_by_default_the_price_does_not_matter(db, pipe, chat_id):
+    """Цена не важна: заказ за 3 000 ₽ и заказ без цены показываются и оцениваются так же, как дорогой."""
+    save_profile(db, Profile(recall=False))
+    assert Profile().ignore_budget is True
+    cheap = await pipe.process(make_raw(chat_id, "Нужен телеграм-бот с GPT для записи клиентов, оплата 3 000 ₽, срок 3 дня. @c_cheap1", author="c1", author_id=1))
+    free = await pipe.process(make_raw(chat_id, "Требуется специалист по n8n и amoCRM: связать заявки с таблицей, цену обсудим в личке. @c_free22", author="c2", author_id=2))
+    rich = await pipe.process(make_raw(chat_id, "Нужен телеграм-бот с GPT для записи клиентов, оплата 90 000 ₽, срок 3 дня. @c_rich33", author="c3", author_id=3))
+    rows = {k: store.get_order(db, v) for k, v in {"cheap": cheap, "free": free, "rich": rich}.items()}
+    assert all(r["verdict"] in {"match", "maybe"} for r in rows.values()), {k: r["verdict"] for k, r in rows.items()}
+    assert abs(rows["cheap"]["score"] - rows["rich"]["score"]) <= 4, "цена не двигает оценку"
+    assert "ниже" not in (rows["cheap"]["why"] or "")

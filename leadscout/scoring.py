@@ -28,7 +28,7 @@ def hourly_to_day(rate: float) -> float:
 
 def below_minimum(order: OrderView, profile: Profile) -> bool:
     b = order.budget_rub
-    if b is None or profile.min_budget <= 0:
+    if b is None or profile.ignore_budget or profile.min_budget <= 0:
         return False
     if order.period == "hour":
         return hourly_to_day(b) < profile.day_rate * 0.6
