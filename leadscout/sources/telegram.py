@@ -20,8 +20,9 @@ log = logging.getLogger("leadscout.telegram")
 
 Listener = Callable[[RawMessage], Awaitable[None]]
 
-FIRST_SCAN_LIMIT = 500
-FIRST_SCAN_HOURS = 72
+FIRST_SCAN_LIMIT = 500  # на каждые 3 суток срока чтения назад
+LOOKBACK_CHOICES = (24, 72, 168, 336)  # как далеко читать назад: сутки, 3 дня, неделя, 2 недели
+DEFAULT_LOOKBACK = 168
 CATCHUP_LIMIT = 1000
 MAX_PAGES = 8  # до 8000 сообщений на чат за одну проверку
 
@@ -128,8 +129,12 @@ class TelegramReader:
         self._by_tg: dict[int, int] = {}
         self._dialogs_loaded = False
         self._handler = None
+        self.lookback_hours = DEFAULT_LOOKBACK  # первый запуск и возвращение после перерыва: читаем всё накопленное, но не старше этого срока
         self.live = True  # разбирать ли новые сообщения сразу; при редких проверках выключено
         self.seen: dict[int, int] = {}  # чат -> самый новый просмотренный id, включая сообщения без текста
+
+    def first_limit(self) -> int:
+        return min(2500, FIRST_SCAN_LIMIT * -(-self.lookback_hours // 72))
 
     # ------------------------------------------------------------ жизнь ----
     async def start(self) -> None:
@@ -280,12 +285,12 @@ class TelegramReader:
             return seen, top
 
         if first:
-            _, newest = await pull(self.client.iter_messages(ent, limit=FIRST_SCAN_LIMIT),
-                                   datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
+            _, newest = await pull(self.client.iter_messages(ent, limit=self.first_limit()),
+                                   datetime.now(UTC) - timedelta(hours=self.lookback_hours))
         else:
             if stale is not None and stale > timedelta(hours=12):
                 # давно не читали (сервер был выключен): идём от недавнего времени, а не от старого курсора, чтобы свежее не ждало часами
-                start = max(last - timedelta(minutes=10), datetime.now(UTC) - timedelta(hours=FIRST_SCAN_HOURS))
+                start = max(last - timedelta(minutes=10), datetime.now(UTC) - timedelta(hours=self.lookback_hours))
                 seen, top = await pull(self.client.iter_messages(ent, offset_date=start, limit=CATCHUP_LIMIT, reverse=True))
             else:
                 seen, top = await pull(self.client.iter_messages(ent, min_id=row["last_msg_id"], limit=CATCHUP_LIMIT, reverse=True))

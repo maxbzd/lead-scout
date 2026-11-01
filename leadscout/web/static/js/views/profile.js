@@ -88,6 +88,9 @@ export async function renderProfile() {
       <div class="mono" style="margin-top:14px">как часто проверять</div>
       <div class="seg" id="scan-seg" style="margin:8px 0 0"></div>
       <p class="capnote" style="margin-top:8px">Реже проверка, меньше нагрузка и расход ИИ. Сообщения не теряются: бот каждый раз читает всё накопленное.</p>
+      <div class="mono" style="margin-top:14px">как далеко читать назад</div>
+      <div class="seg" id="lookback-seg" style="margin:8px 0 0"></div>
+      <p class="capnote" style="margin-top:8px">Первый запуск и возвращение после перерыва: бот прочитает всё, что накопилось с прошлой проверки, но не старше этого срока. Чем дальше, тем больше сообщений и запросов к ИИ.</p>
     </div>
 
     <div class="glass" id="notif"></div>
@@ -128,6 +131,7 @@ export async function renderProfile() {
   paintUpdate();
   paintChatsNote();
   paintScanSeg();
+  paintLookback();
 }
 
 // ------------------------------------------------------------ готовность ----
@@ -154,6 +158,15 @@ function paintScanSeg() {
   const choices = Object.keys(SCAN_LABELS).map(Number);
   if (!choices.includes(cur)) choices.push(cur);
   paint(el, choices.sort((a, b) => a - b).map((m) => raw(`<button type="button" data-act="scan-every" data-v="${m}" aria-pressed="${m === cur}">${esc(SCAN_LABELS[m] || `${m} мин`)}</button>`)));
+}
+
+const LOOKBACKS = [[24, 'Сутки'], [72, '3 дня'], [168, 'Неделя'], [336, '2 недели']];
+
+function paintLookback() {
+  const el = $('#lookback-seg');
+  if (!el || !S.status) return;
+  const cur = S.status.scan.lookback_hours ?? 168;
+  paint(el, LOOKBACKS.map(([h, label]) => raw(`<button type="button" data-act="lookback" data-v="${h}" aria-pressed="${h === cur}">${esc(label)}</button>`)));
 }
 
 function paintChatsNote() {
@@ -373,6 +386,12 @@ export const profileActions = {
       paintConns();
       toast(S.status.llm.control.active ? 'ИИ снова работает' : 'ИИ на паузе: расходов нет');
     } catch (e) { toast(e.message); }
+  },
+  lookback: async (el) => {
+    const r = await put('/settings/lookback', { hours: +el.dataset.v });
+    S.status.scan = { ...S.status.scan, ...r.scan };
+    paintLookback();
+    toast(`Читаю назад не дальше: ${(LOOKBACKS.find(([h]) => h === +el.dataset.v) || [0, ''])[1].toLowerCase()}`);
   },
   'scan-every': async (el) => {
     try {

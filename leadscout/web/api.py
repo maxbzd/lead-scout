@@ -31,7 +31,7 @@ from ..profile import (
 )
 from ..runtime import Runtime
 from ..secrets_store import mask
-from ..sources.telegram import LoginError, TelegramProblem
+from ..sources.telegram import LOOKBACK_CHOICES, LoginError, TelegramProblem
 from ..updater import UpdateError, Updater
 from ..util import fmt_age, minutes_ago
 from .auth import COOKIE, MAX_AGE, Auth, client_ip, require_auth
@@ -587,6 +587,19 @@ class ScanIn(BaseModel):
 def set_scan(body: ScanIn, request: Request) -> dict:
     rt = rt_of(request)
     rt.set_scan_minutes(body.minutes)
+    return {"scan": rt.scan_status()}
+
+
+class LookbackIn(BaseModel):
+    hours: int
+
+
+@router.put("/settings/lookback")
+def set_lookback(body: LookbackIn, request: Request) -> dict:
+    rt = rt_of(request)
+    if body.hours not in LOOKBACK_CHOICES:
+        raise HTTPException(422, "Выберите срок из списка: сутки, 3 дня, неделя или 2 недели")
+    rt.set_lookback_hours(body.hours)
     return {"scan": rt.scan_status()}
 
 
