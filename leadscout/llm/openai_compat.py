@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ from ..extract import Flag
 from ..models import Extraction, Learned, OrderView, Score
 from ..profile import Profile
 from ..scoring import finalize
+from ..secrets_store import mask
 from ..util import clip, local_now
 from .base import LLMUnavailable
 from .claude import SCORE_SYSTEM, ClaudeLLM
@@ -93,61 +95,94 @@ class OpenAICompatLLM(ClaudeLLM):
     scored_by = "ai"
     deferred = True  # оценка ИИ идёт в фоне, чтобы лимиты не тормозили проверку чатов
 
-    def __init__(self, base_url: str, api_key: str, model: str, db: Database | None = None, rpm: int = 20,
+    def __init__(self, base_url: str, api_key: str | list[str], model: str, db: Database | None = None, rpm: int = 20,
                  rpd: int = 1000, client: httpx.AsyncClient | None = None, provider: str = "custom"):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        keys = [api_key] if isinstance(api_key, str) else list(api_key)
+        self.keys = [k.strip() for k in keys if k and k.strip()] or [""]  # несколько ключей складывают лимиты; пустой ключ только у своей модели
+        self.api_key = self.keys[0]
         self.model_fast = self.model_smart = model
         self.model = model
         self.provider = provider
         self.db = db
-        self.rpm, self.rpd = max(1, rpm), max(1, rpd)
+        self.rpm = max(1, rpm)
+        self.rpd_key = max(1, rpd)  # суточный лимит одного ключа
+        self.rpd = self.rpd_key * len(self.keys)  # и всех вместе
         self.client = client or httpx.AsyncClient(timeout=60.0)
         self.last_error: str | None = None
         self.calls = 0
         self._gate = asyncio.Lock()
         self._last_call = 0.0
-        self._blocked_until = 0.0
+        self._blocked: dict[str, float] = {}  # ключ -> до какого момента ждём (ответ 429)
+        self._bad: set[str] = set()  # ключи, которые сервис не принял
+        self._counts: dict[str, int] = {}
         self._json_mode = True
 
     # --- лимиты ---------------------------------------------------------
+    @staticmethod
+    def _kid(key: str) -> str:
+        return hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
+
+    def _day(self) -> str:
+        return local_now("UTC").strftime("%Y-%m-%d")
+
     def _day_key(self) -> str:
-        return "ai_calls:" + local_now("UTC").strftime("%Y-%m-%d")
+        return "ai_calls:" + self._day()
 
     def used_today(self) -> int:
         return int(self.db.get_setting(self._day_key(), 0)) if self.db else self.calls
 
-    def _count(self) -> None:
+    def key_used(self, key: str) -> int:
+        if self.db:
+            return int(self.db.get_setting(f"{self._day_key()}:{self._kid(key)}", 0))
+        return self._counts.get(key, 0)
+
+    def _count(self, key: str) -> None:
         self.calls += 1
+        self._counts[key] = self._counts.get(key, 0) + 1
         if self.db:
             self.db.set_setting(self._day_key(), self.used_today() + 1)
+            self.db.set_setting(f"{self._day_key()}:{self._kid(key)}", self.key_used(key) + 1)
 
-    async def _wait_turn(self) -> None:
-        if time.monotonic() < self._blocked_until:
-            raise LLMUnavailable(self.last_error or "ИИ временно недоступен")
-        if self.used_today() >= self.rpd:
-            self.last_error = "Дневной лимит бесплатного ИИ израсходован: до завтра работаю по правилам"
+    def _state(self, key: str, now: float) -> str:
+        if key in self._bad:
+            return "bad"
+        if self.key_used(key) >= self.rpd_key:
+            return "limit"
+        if now < self._blocked.get(key, 0.0):
+            return "blocked"
+        return "ok"
+
+    def key_states(self) -> list[dict]:
+        now = time.monotonic()
+        return [{"mask": mask(k) if k else "без ключа", "used": self.key_used(k), "limit": self.rpd_key, "state": self._state(k, now)} for k in self.keys]
+
+    async def _acquire(self) -> str:
+        """Выбираем ключ с наименьшим расходом за сегодня из тех, что сейчас работают, и держим паузу под лимит запросов в минуту."""
+        now = time.monotonic()
+        usable = [k for k in self.keys if self._state(k, now) == "ok"]
+        if not usable:
+            states = {self._state(k, now) for k in self.keys}
+            if states == {"bad"}:
+                self.last_error = "Ключ ИИ не подошёл или у него нет доступа к модели" if len(self.keys) == 1 else "Ни один ключ ИИ не подошёл"
+            elif "blocked" in states:
+                self.last_error = self.last_error or "Бесплатный лимит ИИ исчерпан: работаю по правилам и скоро попробую снова"
+            else:
+                self.last_error = "Дневной лимит бесплатного ИИ израсходован: до завтра работаю по правилам"
             raise LLMUnavailable(self.last_error)
-        async with self._gate:  # не чаще заданного числа запросов в минуту
-            gap = 60.0 / self.rpm - (time.monotonic() - self._last_call)
+        key = min(usable, key=self.key_used)
+        async with self._gate:  # у каждого ключа свой лимит в минуту, поэтому с несколькими ключами можно чаще
+            gap = 60.0 / (self.rpm * len(usable)) - (time.monotonic() - self._last_call)
             if gap > 0:
                 await asyncio.sleep(gap)
             self._last_call = time.monotonic()
+        return key
 
     # --- вызов ----------------------------------------------------------
-    async def _call(self, model: str, system: str, user: str, *, schema: dict | None = None,
-                    effort: str = "low", max_tokens: int = 4000, wants_json: bool | None = None) -> str:
-        wants_json = (schema is not None) if wants_json is None else wants_json
-        await self._wait_turn()
-        body: dict[str, Any] = {
-            "model": self.model, "temperature": 0.2, "max_tokens": min(max_tokens, 3000),
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        }
-        if wants_json and self._json_mode:
-            body["response_format"] = {"type": "json_object"}
+    async def _post(self, body: dict[str, Any], key: str) -> httpx.Response:
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
         try:
             resp = await self.client.post(f"{self.base_url}/chat/completions", json=body, headers=headers)
             if resp.status_code == 400 and "response_format" in body:
@@ -157,17 +192,36 @@ class OpenAICompatLLM(ClaudeLLM):
         except httpx.HTTPError as e:
             self.last_error = "Нет связи с сервисом ИИ"
             raise LLMUnavailable(self.last_error) from e
-        self._count()
-        if resp.status_code in (401, 403):
-            self.last_error = "Ключ ИИ не подошёл или у него нет доступа к модели"
-            raise LLMUnavailable(self.last_error)
+        return resp
+
+    async def _call(self, model: str, system: str, user: str, *, schema: dict | None = None,
+                    effort: str = "low", max_tokens: int = 4000, wants_json: bool | None = None) -> str:
+        wants_json = (schema is not None) if wants_json is None else wants_json
+        body: dict[str, Any] = {
+            "model": self.model, "temperature": 0.2, "max_tokens": min(max_tokens, 3000),
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        }
+        if wants_json and self._json_mode:
+            body["response_format"] = {"type": "json_object"}
+        resp = None
+        for _ in range(len(self.keys)):  # ключ не принят или упёрся в лимит: пробуем следующий
+            key = await self._acquire()
+            resp = await self._post(body, key)
+            self._count(key)
+            if resp.status_code in (401, 403):
+                self._bad.add(key)
+                self.last_error = "Ключ ИИ не подошёл или у него нет доступа к модели" if len(self.keys) == 1 else "Один из ключей ИИ не подошёл"
+                continue
+            if resp.status_code == 429:
+                self._blocked[key] = time.monotonic() + _retry_after(resp)
+                self.last_error = "Бесплатный лимит ИИ исчерпан: работаю по правилам и скоро попробую снова"
+                continue
+            break
+        assert resp is not None
+        if resp.status_code in (401, 403, 429):
+            raise LLMUnavailable(self.last_error or "ИИ недоступен")
         if resp.status_code == 404:
             self.last_error = f"Модель «{self.model}» не найдена у этого сервиса"
-            raise LLMUnavailable(self.last_error)
-        if resp.status_code == 429:
-            wait = _retry_after(resp)
-            self._blocked_until = time.monotonic() + wait
-            self.last_error = "Бесплатный лимит ИИ исчерпан: работаю по правилам и скоро попробую снова"
             raise LLMUnavailable(self.last_error)
         if resp.status_code >= 400:
             self.last_error = f"Сервис ИИ ответил ошибкой {resp.status_code}"

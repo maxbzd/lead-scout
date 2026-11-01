@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -31,6 +32,15 @@ log = logging.getLogger("leadscout.runtime")
 
 CONCURRENCY = 4
 START_TIMEOUT = 25
+
+
+def parse_keys(text: str | None) -> list[str]:
+    """Ключи ИИ из одной строки: по одному в строке или через запятую, без повторов."""
+    out: list[str] = []
+    for k in re.split(r"[\s,;]+", text or ""):
+        if k and k not in out:
+            out.append(k)
+    return out
 
 
 class Runtime:
@@ -133,11 +143,14 @@ class Runtime:
             self.llm = FallbackLLM(ClaudeLLM(key, self.settings.model_fast, self.settings.model_smart, db=self.db))
         elif cfg and cfg.get("base_url") and cfg.get("model"):
             self.llm = FallbackLLM(OpenAICompatLLM(
-                cfg["base_url"], self.secrets.get("ai_key") or "", cfg["model"], db=self.db,
+                cfg["base_url"], self.ai_keys(), cfg["model"], db=self.db,
                 rpm=int(cfg.get("rpm", 20)), rpd=int(cfg.get("rpd", 1000)), provider=cfg.get("provider", "custom")))
         else:
             self.llm = RuleLLM()
         self.pipeline.set_llm(self.llm)
+
+    def ai_keys(self) -> list[str]:
+        return parse_keys(self.secrets.get("ai_key"))
 
     def llm_status(self) -> dict:
         primary = getattr(self.llm, "primary", None)
@@ -151,7 +164,7 @@ class Runtime:
         elif mode == "ai":
             cfg = self.db.get_setting("ai_config") or {}
             out.update(source="app" if not self.secrets.source("ai_key") == "env" else "env", provider=cfg.get("provider"),
-                       model=cfg.get("model"), used_today=primary.used_today(), limit_today=primary.rpd)
+                       model=cfg.get("model"), used_today=primary.used_today(), limit_today=primary.rpd, keys=primary.key_states())
         return out
 
     async def connect_ai(self, provider: str, key: str, model: str = "", base_url: str = "") -> None:
@@ -161,29 +174,68 @@ class Runtime:
             raise LLMUnavailable("Неизвестный сервис ИИ")
         base_url = (base_url or preset["base_url"]).strip()
         model = (model or preset["model"]).strip()
-        key = key.strip()
+        keys = parse_keys(key)
         if not base_url.startswith(("http://", "https://")) or not model:
             raise LLMUnavailable("Укажите адрес сервиса (http:// или https://) и название модели")
-        if preset["needs_key"] and len(key) < 8:
+        if preset["needs_key"] and not keys:
             raise LLMUnavailable("Вставьте ключ целиком. Его выдаёт сам сервис")
-        probe = OpenAICompatLLM(base_url, key, model, rpm=preset["rpm"], rpd=preset["rpd"], provider=provider)
-        try:
-            await probe.check()
-        finally:
-            await probe.aclose()
+        if preset["needs_key"] and any(len(k) < 8 for k in keys):
+            raise LLMUnavailable("Один из ключей слишком короткий. Вставьте ключи целиком, по одному в строке")
+        await self._probe_keys(base_url, keys, model, preset["rpm"], preset["rpd"], provider)
         self.db.set_setting("ai_config", {"provider": provider, "base_url": base_url, "model": model,
                                           "rpm": preset["rpm"], "rpd": preset["rpd"]})
-        if key:
-            self.secrets.set("ai_key", key)
+        if keys:
+            self.secrets.set("ai_key", "\n".join(keys))
         else:
             self.secrets.delete("ai_key")
         self.build_llm()
+
+    @staticmethod
+    async def _probe_keys(base_url: str, keys: list[str], model: str, rpm: int, rpd: int, provider: str) -> None:
+        """Каждый ключ проверяем одним коротким запросом: в сообщении видно, какой именно не подошёл."""
+        for n, k in enumerate(keys or [""], 1):
+            probe = OpenAICompatLLM(base_url, k, model, rpm=rpm, rpd=rpd, provider=provider)
+            try:
+                await probe.check()
+            except LLMUnavailable as e:
+                raise LLMUnavailable(f"Ключ {n}: {e}" if len(keys) > 1 else str(e)) from e
+            finally:
+                await probe.aclose()
+
+    async def add_ai_key(self, key: str) -> None:
+        """Ещё один ключ к уже подключённому сервису: дневные лимиты складываются."""
+        cfg = self.db.get_setting("ai_config")
+        if not cfg:
+            raise LLMUnavailable("Сначала подключите сервис ИИ")
+        if self.secrets.source("ai_key") == "env":
+            raise LLMUnavailable("Ключи заданы в файле .env: добавляйте их там")
+        fresh = [k for k in parse_keys(key) if k not in self.ai_keys()]
+        if not fresh:
+            raise LLMUnavailable("Такой ключ уже добавлен")
+        if any(len(k) < 8 for k in fresh):
+            raise LLMUnavailable("Ключ слишком короткий. Вставьте его целиком")
+        await self._probe_keys(cfg["base_url"], fresh, cfg["model"], int(cfg.get("rpm", 20)), int(cfg.get("rpd", 1000)), cfg.get("provider", "custom"))
+        self.secrets.set("ai_key", "\n".join([*self.ai_keys(), *fresh]))
+        self.build_llm()
+
+    def remove_ai_key(self, index: int) -> None:
+        if self.secrets.source("ai_key") == "env":
+            raise LLMUnavailable("Ключи заданы в файле .env: убирайте их там")
+        keys = self.ai_keys()
+        if not 0 <= index < len(keys):
+            raise LLMUnavailable("Такого ключа нет")
+        del keys[index]
+        if keys:
+            self.secrets.set("ai_key", "\n".join(keys))
+            self.build_llm()
+        else:
+            self.disconnect_ai()
 
     async def ai_models(self, provider: str, key: str, base_url: str = "") -> list[str]:
         preset = PROVIDERS.get(provider)
         if preset is None:
             raise LLMUnavailable("Неизвестный сервис ИИ")
-        probe = OpenAICompatLLM((base_url or preset["base_url"]).strip(), key.strip(), preset["model"], provider=provider)
+        probe = OpenAICompatLLM((base_url or preset["base_url"]).strip(), (parse_keys(key) or [""])[0], preset["model"], provider=provider)
         try:
             return await probe.list_models()
         finally:

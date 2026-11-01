@@ -604,7 +604,7 @@ def ai_control_put(body: AiControlIn, request: Request) -> dict:
 
 class AiIn(BaseModel):
     provider: str = Field(max_length=20)
-    key: str = Field(default="", max_length=300)
+    key: str = Field(default="", max_length=4000)  # можно несколько ключей, по одному в строке
     model: str = Field(default="", max_length=120)
     base_url: str = Field(default="", max_length=300)
 
@@ -625,6 +625,24 @@ async def ai_models(body: AiIn, request: Request) -> dict:
 async def connect_ai(body: AiIn, request: Request) -> dict:
     rt = rt_of(request)
     await rt.connect_ai(body.provider, body.key, body.model, body.base_url)
+    return {"llm": rt.llm_status()}
+
+
+class AddKeyIn(BaseModel):
+    key: str = Field(min_length=8, max_length=4000)
+
+
+@router.post("/connect/ai/keys")
+async def add_ai_key(body: AddKeyIn, request: Request) -> dict:
+    rt = rt_of(request)
+    await rt.add_ai_key(body.key)
+    return {"llm": rt.llm_status()}
+
+
+@router.delete("/connect/ai/keys/{index}")
+def remove_ai_key(index: int, request: Request) -> dict:
+    rt = rt_of(request)
+    rt.remove_ai_key(index)
     return {"llm": rt.llm_status()}
 
 
