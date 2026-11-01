@@ -25,6 +25,7 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Значок на рабочем столе"; GroupDescription: "Дополнительно:"
+Name: "autostart"; Description: "Запускать вместе с Windows (проверка чатов по расписанию и действия с телефона работают без открытого окна)"; GroupDescription: "Дополнительно:"; Flags: unchecked
 
 [Files]
 Source: "..\dist\Scout\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -32,6 +33,9 @@ Source: "..\dist\Scout\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 [Icons]
 Name: "{autoprograms}\Scout"; Filename: "{app}\Scout.exe"
 Name: "{autodesktop}\Scout"; Filename: "{app}\Scout.exe"; Tasks: desktopicon
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Scout"; ValueData: """{app}\Scout.exe"" --background"; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\Scout.exe"; Description: "Запустить Scout"; Flags: nowait postinstall

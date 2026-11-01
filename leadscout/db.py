@@ -162,6 +162,18 @@ class Database:
         self._memory_conn: sqlite3.Connection | None = None
         self.migrate()
 
+    def backup_to(self, target: str | Path) -> None:
+        """Цельная копия базы в файл. Зашифрованные ключи и токены в неё не попадают."""
+        with self.conn() as src:
+            dst = sqlite3.connect(str(target))
+            try:
+                src.backup(dst)
+                dst.execute("DELETE FROM settings WHERE key LIKE 'secret:%'")
+                dst.commit()
+                dst.execute("VACUUM")
+            finally:
+                dst.close()
+
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:
         if self.path == ":memory:":

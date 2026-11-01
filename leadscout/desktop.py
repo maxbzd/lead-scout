@@ -66,7 +66,8 @@ def alive(port: int) -> bool:
         return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    background = "--background" in (sys.argv[1:] if argv is None else argv)  # запуск вместе с Windows: окно не открываем
     os.environ["LS_LOCAL"] = "1"
     from .config import Settings
 
@@ -88,14 +89,16 @@ def main() -> int:
     except (OSError, ValueError):
         running = 0
     if running and alive(running):
-        open_window(f"http://localhost:{running}")  # программа уже работает: показываем её окно
+        if not background:
+            open_window(f"http://localhost:{running}")  # программа уже работает: показываем её окно
         return 0
 
     from .__main__ import free_port, run_local
 
     settings.port = free_port(settings.host, settings.port)
     try:
-        return run_local(settings, opener=open_window, on_ready=lambda port: pf.write_text(str(port)), announce=False)
+        return run_local(settings, opener=(lambda url: None) if background else open_window,
+                         on_ready=lambda port: pf.write_text(str(port)), announce=False)
     finally:
         try:
             pf.unlink()
