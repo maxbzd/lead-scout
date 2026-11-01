@@ -49,7 +49,7 @@ def run_local(settings: Settings, opener=None, on_ready=None, announce: bool = T
         while not server.should_exit:
             await asyncio.sleep(float(os.environ.get("LS_QUIT_CHECK", 10)))
             rt = app.state.rt
-            busy = rt.scanning or bool(rt._tasks) or rt.cloud.enabled  # с облачным сайтом программа ждёт ваших действий с телефона
+            busy = rt.scanning or bool(rt._tasks) or rt.cloud.enabled or rt.scan_minutes > 0  # облако и проверка по расписанию требуют работающей программы
             if should_quit(time.monotonic(), started, app.state.last_request, rt.sse_clients, busy,
                            grace=float(os.environ.get("LS_QUIT_GRACE", 120)), idle=float(os.environ.get("LS_QUIT_IDLE", 90))):
                 log.info("Окно закрыто, останавливаюсь")
