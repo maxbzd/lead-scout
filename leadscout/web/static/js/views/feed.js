@@ -176,7 +176,7 @@ function discardedHtml(m) {
     <div class="meta"><span class="age"><i></i>${m.age_label}</span><span>${m.chat}</span>${m.demo ? html`<span class="demo-tag">демо</span>` : ''}</div>
     <p class="raw-text">${m.text}</p>
     ${m.author ? html`<p class="mono note-sm" style="margin-top:8px">${m.author}</p>` : ''}
-    <div class="foot"><span class="mono">бот не счёл заказом</span><div class="acts">
+    <div class="foot"><span class="mono">${m.why || 'не похоже на заказ'}</span><div class="acts">
       ${link ? html`<a class="ib" href="${link}" target="_blank" rel="noopener noreferrer" aria-label="Открыть в Telegram">${I.link}</a>` : ''}
       <button class="go" type="button" data-act="promote" data-id="${m.id}">${I.plus}Это заказ</button></div></div>
   </article>`;

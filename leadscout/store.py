@@ -140,14 +140,28 @@ def list_discarded(db: Database, q: str = "", limit: int = 100) -> list[dict]:
         where += " AND ulower(m.text) LIKE ? ESCAPE '\\'"
         args.append("%" + q.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
     return db.all(
-        "SELECT m.id, m.text, m.posted_at, m.author_username, m.author_name, m.tg_msg_id, c.title AS chat_title, "
+        "SELECT m.id, m.text, m.note, m.posted_at, m.author_username, m.author_name, m.tg_msg_id, c.title AS chat_title, "
         "c.username AS chat_username, c.tg_id AS chat_tg, c.is_demo AS chat_demo FROM messages m JOIN chats c ON c.id=m.chat_id "
         f"WHERE {where} ORDER BY m.posted_at DESC LIMIT ?", (*args, limit),
     )
 
 
-def set_message_status(db: Database, message_id: int, status: str) -> None:
-    db.run("UPDATE messages SET status=? WHERE id=?", (status, message_id))
+def set_message_status(db: Database, message_id: int, status: str, note: str | None = None) -> None:
+    db.run("UPDATE messages SET status=?, note=? WHERE id=?", (status, note, message_id))
+
+
+KIND_LABELS = {"offer": "предложение услуг", "vacancy": "вакансия в штат", "ad": "реклама", "chat": "обсуждение", "rules": "правила чата"}
+
+
+def why_discarded(note: str | None) -> str:
+    """Короткое объяснение для списка «Отброшено»: кто и почему решил, что это не заказ."""
+    who, _, kind = (note or "").partition(":")
+    label = KIND_LABELS.get(kind)
+    if who == "ai" and label:
+        return f"ИИ: {label}"
+    if who == "rule" and label:
+        return f"по правилам: {label}"
+    return "не похоже на заказ"
 
 
 def bump_chat_cursor(db: Database, chat_id: int, tg_msg_id: int) -> None:
