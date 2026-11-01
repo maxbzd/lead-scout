@@ -279,3 +279,44 @@ def test_your_own_words_about_wanted_orders_reach_both_ai_prompts():
 
     assert "Не нужны сайты на Тильде" in ClaudeLLM._profile_block(prof)
     assert "СЛОВА САМОГО ФРИЛАНСЕРА" not in classify.build_prompt(["текст"], Profile(criteria=""), [], [])[0]
+
+
+class Slow(FakeAI):
+    """ИИ-двойник, который отвечает не сразу: видно, сколько пачек читается одновременно."""
+
+    def __init__(self):
+        super().__init__()
+        self.now = 0
+        self.peak = 0
+
+    async def classify(self, texts, profile, yes, no):
+        self.now += 1
+        self.peak = max(self.peak, self.now)
+        await asyncio.sleep(0.02)
+        self.now -= 1
+        return await super().classify(texts, profile, yes, no)
+
+
+def test_several_batches_are_read_at_once_and_every_message_gets_its_verdict(db, settings, chat_id):
+    p = Pipeline(db, Slow(), settings)
+    p.ai_on = lambda: True
+    ids = run(ingest(p, chat_id, many(100)))
+    assert all(ids), "каждое из 100 сообщений получило решение и стало заказом"
+    assert 2 <= p.llm.peak <= 4
+    assert sum(len(c["texts"]) for c in p.llm.calls) == 100
+
+
+def test_unlimited_mode_removes_the_apps_own_limits(tmp_path):
+    from leadscout.config import Settings as S
+    from leadscout.runtime import Runtime
+
+    rt = Runtime(S(data_dir=tmp_path, run_worker=False))
+    rt.db.set_setting("ai_config", {"provider": "gemini", "base_url": "https://x/v1", "model": "m", "rpm": 12, "rpd": 900})
+    rt.secrets.set("ai_key", "key-aaaaaaaa\nkey-bbbbbbbb")
+    rt.build_llm()
+    assert rt.llm.primary.rpd == 1800 and rt.pipeline._classify_budget() < classify.MAX_BATCHES + 1
+    rt.set_ai_control({"unlimited": True})
+    assert rt.llm.primary.rpd >= 10_000_000 and rt.pipeline._classify_budget() == 10**6
+    assert rt.llm_status()["control"]["unlimited"] is True
+    rt.set_ai_control({"unlimited": False})
+    assert rt.llm.primary.rpd == 1800

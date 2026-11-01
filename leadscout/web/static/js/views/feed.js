@@ -380,7 +380,7 @@ export function updateScanPill() {
   if (!pill) return;
   const last = S.status?.scan.last?.at;
   const pr = S.status?.scan.progress;
-  if (S.status?.scan.running) { pill.textContent = pr ? `ИИ читает ${pr[0] + 1}/${pr[1]}` : 'сканирую…'; return; }
+  if (S.status?.scan.running) { pill.textContent = pr ? `ИИ читает ${pr[0]}/${pr[1]}` : 'сканирую…'; return; }
   if (!last) { pill.textContent = 'ещё не сканировал'; return; }
   const d = new Date(last);
   pill.textContent = `скан ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;

@@ -161,9 +161,11 @@ class Runtime:
         if key:
             self.llm = FallbackLLM(ClaudeLLM(key, self.settings.model_fast, self.settings.model_smart, db=self.db))
         elif cfg and cfg.get("base_url") and cfg.get("model"):
+            free = not ai_control.load(self.db)["unlimited"]  # без лимитов приложения ограничивает только сам сервис (его отказы бот переживает)
             self.llm = FallbackLLM(OpenAICompatLLM(
                 cfg["base_url"], self.ai_keys(), cfg["model"], db=self.db,
-                rpm=int(cfg.get("rpm", 20)), rpd=int(cfg.get("rpd", 1000)), provider=cfg.get("provider", "custom")))
+                rpm=int(cfg.get("rpm", 20)) if free else 600, rpd=int(cfg.get("rpd", 1000)) if free else 10_000_000,
+                provider=cfg.get("provider", "custom")))
         else:
             self.llm = RuleLLM()
         self.pipeline.set_llm(self.llm)
@@ -262,6 +264,8 @@ class Runtime:
 
     def set_ai_control(self, patch: dict) -> dict:
         ai_control.save(self.db, patch)
+        if "unlimited" in patch:
+            self.build_llm()  # лимиты запросов зашиты в созданный объект ИИ
         self.pipeline.reset_ai_state()
         self.bus.publish({"type": "status"})
         return self.llm_status()
