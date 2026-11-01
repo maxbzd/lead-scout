@@ -245,3 +245,15 @@ def test_progress_is_reported_while_the_ai_reads_and_cleared_after(db, settings,
     p.on_progress = lambda: seen.append(p.progress)
     run(ingest(p, chat_id, many(40)))
     assert seen[:3] == [(0, 3), (1, 3), (2, 3)] and p.progress is None and seen[-1] is None
+
+
+def test_ai_is_shown_the_examples_most_similar_to_what_it_reads(db):
+    classify.teach(db, "Коллеги, посоветуйте нотариуса в Казани для оформления доверенности на квартиру срочно", False)
+    for i in range(10):
+        classify.teach(db, f"Продаю курс по бухгалтерии номер {i}, скидка пятьдесят процентов только сегодня подписывайтесь", False)
+    for i in range(10):
+        classify.teach(db, f"Нужен бот для записи клиентов номер {i} бюджет сорок тысяч рублей пишите в личку", True)
+    _, no = classify.examples(db, ["Ищу нотариуса в Казани, подскажите хорошего специалиста по доверенностям"])
+    assert any("нотариуса" in t for t in no), "самый похожий пример попадает в подсказку, даже если он не самый свежий"
+    yes, no2 = classify.examples(db)
+    assert len(yes) == classify.SHOW_EACH and not any("нотариуса" in t for t in no2)  # без пачки берутся самые свежие
