@@ -37,8 +37,8 @@ export async function renderProfile() {
   const hosted = !!S.status.cloud?.hosted;
   const demoToggle = !hosted && S.status.telegram.state !== 'ready';
   paint(view, html`<section class="view"><div class="set" style="margin-top:14px">
-    <div class="glass" id="ready"></div>
-
+    <div class="seg psegs" id="psegs" role="tablist" aria-label="Разделы профиля"></div>
+    <div class="psec" data-sec="me">
     <div class="glass">
       <div class="sw-row"><div><div class="t">Ничего не пропускать</div><div class="s">Сомнительные заказы тоже показываю с пометкой. Всё, что бот отбросил, лежит в ленте в разделе «Отброшено».</div></div>
         <button class="sw" id="recall-sw" role="switch" aria-checked="${!!p.recall}" data-act="recall-toggle" aria-label="Ничего не пропускать"></button></div>
@@ -72,6 +72,8 @@ export async function renderProfile() {
       <div class="btnrow"><button class="btn" type="button" data-act="case-add">Добавить кейс</button><button class="btn" type="button" data-act="import">Собрать из текста</button></div>
     </div>
 
+    </div>
+    <div class="psec" data-sec="chats">
     <div class="glass">
       <div class="card-head"><div class="mono">чаты</div></div>
       <p class="capnote" id="chats-note"></p>
@@ -82,6 +84,9 @@ export async function renderProfile() {
     </div>
 
     <div class="glass" id="notif"></div>
+    </div>
+    <div class="psec" data-sec="connect">
+    <div class="glass" id="ready"></div>
 
     <div class="glass">
       <div class="mono" style="margin-bottom:6px">подключения</div>
@@ -89,16 +94,20 @@ export async function renderProfile() {
       ${demoToggle ? html`<div class="sw-row"><div><div class="t">Показывать тестовые заказы</div><div class="s">Демо, пока Telegram не подключён</div></div><button class="sw" role="switch" aria-checked="${!!S.status.demo}" data-act="demo-toggle" aria-label="Демо-режим"></button></div>` : ''}
     </div>
 
+    </div>
+    <div class="psec" data-sec="app">
     <div class="glass field">
       <div class="mono">часовой пояс</div>
       <select id="tz" class="inp" data-bind="tz" aria-label="Часовой пояс">${ZONES.map(([z, name]) => raw(`<option value="${z}"${p.tz === z ? ' selected' : ''}>${esc(name)}</option>`))}</select>
     </div>
 
-    <div class="glass" id="install"></div>
+    ${S.status.local ? '' : html`<div class="glass" id="install"></div>`}
     ${S.status.local ? html`<div class="glass field" id="update"></div>` : ''}
     ${S.status.local ? html`<button class="btn" type="button" data-act="quit-app" style="width:100%">Закрыть программу</button><p class="capnote center">${S.status.cloud?.connected ? 'Окно можно закрыть, программа продолжит работать и принимать действия с сайта. Этой кнопкой она останавливается совсем.' : 'Закрыв окно, вы тоже остановите программу через пару минут.'}</p>` : html`<button class="btn" type="button" data-act="logout" style="width:100%">Выйти из приложения</button>`}
-    <p class="mono center" style="margin:6px 0 0">Scout 1.0</p>
+    </div>
+    <p class="mono center" style="margin:6px 0 0">Scout ${S.status.update?.current || '1.0'}</p>
   </div></section>`);
+  paintPsegs();
   paintReady();
   paintSkills();
   paintMoney();
@@ -126,7 +135,7 @@ function paintReady() {
   const btn = { chats: 'Выбрать', cases: 'Добавить', telegram: 'Подключить', bot: 'Подключить', ai: 'Включить' };
   const title = done === items.length ? 'Бот готов к работе' : S.status.demo ? 'Демо-режим' : 'Бот почти готов';
   paint(el, html`<div class="ready"><div>${ring(pct, 72, 6)}</div><div><div class="mono">${done} из ${items.length}</div><h3 class="ready-t">${title}</h3></div></div>
-    <div class="todo">${items.map((i) => html`<div><span class="${i.ok ? 'okc' : 'nc'}">${i.ok ? I.check : I.alert}</span><span>${i.label}</span>${!i.ok && action[i.id] ? html`<button class="mini" type="button" data-act="${action[i.id]}">${btn[i.id]}</button>` : html`<span></span>`}</div>`)}</div>`);
+    <div class="todo">${items.filter((i) => !['telegram', 'bot', 'ai'].includes(i.id)).map((i) => html`<div><span class="${i.ok ? 'okc' : 'nc'}">${i.ok ? I.check : I.alert}</span><span>${i.label}</span>${!i.ok && action[i.id] ? html`<button class="mini" type="button" data-act="${action[i.id]}">${btn[i.id]}</button>` : html`<span></span>`}</div>`)}</div>`);
 }
 
 const SCAN_LABELS = { 0: 'Вручную', 10: '10 мин', 30: '30 мин', 60: '1 час', 120: '2 часа', 360: '6 часов' };
@@ -257,13 +266,23 @@ export function paintConns() {
   ]);
 }
 
+const PSECS = [['me', 'Обо мне'], ['chats', 'Чаты'], ['connect', 'Подключения'], ['app', 'Программа']];
+
+function paintPsegs() {
+  const el = $('#psegs');
+  if (!el) return;
+  if (!S.psec) S.psec = 'me';
+  paint(el, PSECS.map(([id, label]) => html`<button type="button" role="tab" aria-selected="${S.psec === id}" data-act="psec" data-v="${id}">${label}</button>`));
+  document.querySelectorAll('.psec').forEach((sec) => { sec.hidden = sec.dataset.sec !== S.psec; });
+}
+
 export function paintUpdate() {
   const el = $('#update');
   const u = S.status?.update;
   if (!el || !u) return;
-  const state = u.available ? `Доступна версия ${u.latest}.` : u.error ? u.error : u.checked_at ? 'У вас последняя версия.' : 'Ещё не проверял.';
+  const state = u.available ? (u.can_install ? `Доступна версия ${u.latest}.` : `Доступна версия ${u.latest}. Установите её поверх: данные сохранятся.`) : u.error ? u.error : u.checked_at ? 'У вас последняя версия.' : 'Ещё не проверял.';
   const act = u.available && u.can_install ? html`<button class="btn pri small" type="button" data-act="update-install">Обновить</button>`
-    : u.available ? html`<span class="capnote">Скачайте свежий установщик с GitHub: из запуска файлом обновить кнопкой нельзя.</span>`
+    : u.available ? html`<a class="btn pri small" href="https://github.com/maxbzd/lead-scout/releases/latest" target="_blank" rel="noopener noreferrer">Скачать</a>`
       : html`<button class="btn small" type="button" data-act="update-check">Проверить</button>`;
   const a = S.status.autostart;
   const auto = a?.supported ? html`<div class="sw-row"><div><div class="t">Запускать вместе с Windows</div><div class="s">Программа стартует в фоне без окна: проверяет чаты по расписанию и принимает действия с телефона. Откроете её значком</div></div><button class="sw" role="switch" aria-checked="${a.enabled}" data-act="autostart-toggle" aria-label="Запускать вместе с Windows"></button></div>` : '';
@@ -422,6 +441,7 @@ export const profileActions = {
   'connect-bot': () => openConnect('bot'),
   'connect-ai': () => openConnect('claude'),
   'connect-cloud': () => openConnect('cloud'),
+  psec: (el) => { S.psec = el.dataset.v; paintPsegs(); window.scrollTo(0, 0); },
   'demo-toggle': async () => {
     try {
       await post('/demo', { on: !S.status.demo });
