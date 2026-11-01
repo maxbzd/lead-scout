@@ -135,3 +135,25 @@ async def test_by_default_the_price_does_not_matter(db, pipe, chat_id):
     assert all(r["verdict"] in {"match", "maybe"} for r in rows.values()), {k: r["verdict"] for k, r in rows.items()}
     assert abs(rows["cheap"]["score"] - rows["rich"]["score"]) <= 4, "цена не двигает оценку"
     assert "ниже" not in (rows["cheap"]["why"] or "")
+
+
+async def test_any_site_request_is_shown_but_an_explicit_constructor_is_not(db, pipe, chat_id):
+    save_profile(db, Profile(recall=False))
+    plain = await pipe.process(make_raw(chat_id, "Нужен сайт-визитка для стоматологии: 5 страниц, форма заявки, адаптив. Срок две недели. @dent_owner", author="s1", author_id=1))
+    shop = await pipe.process(make_raw(chat_id, "Требуется разработчик интернет-магазина, нужно сделать каталог и корзину. Пишите @shop_owner9", author="s2", author_id=2))
+    tilda = await pipe.process(make_raw(chat_id, "Нужен лендинг на Тильде для онлайн-курса, макет есть, срок 3 дня. @tilda_owner", author="s3", author_id=3))
+    wix = await pipe.process(make_raw(chat_id, "Нужен сайт на Wix для студии йоги, нужно собрать 4 страницы. @yoga_owner", author="s4", author_id=4))
+    verdict = {k: store.get_order(db, v)["verdict"] for k, v in {"plain": plain, "shop": shop, "tilda": tilda, "wix": wix}.items()}
+    assert verdict["plain"] in {"match", "maybe"} and verdict["shop"] in {"match", "maybe"}, verdict
+    assert verdict["tilda"] == "skip" and verdict["wix"] == "skip", verdict
+
+
+def test_untouched_old_defaults_are_upgraded_but_your_edits_are_kept(db):
+    from leadscout.profile import DEFAULT_CRITERIA, DEFAULT_SKILLS, LEGACY_DEFAULTS, load_profile
+
+    db.set_setting("profile", {"skills": LEGACY_DEFAULTS["skills"][1], "stop_words": LEGACY_DEFAULTS["stop_words"][0], "criteria": LEGACY_DEFAULTS["criteria"][0]})
+    p = load_profile(db)
+    assert p.skills == DEFAULT_SKILLS and "тильд" in p.stop_words and p.criteria == DEFAULT_CRITERIA
+    db.set_setting("profile", {"skills": ["Свой навык"], "stop_words": ["моё"], "criteria": "Мои слова"})
+    p = load_profile(db)
+    assert p.skills == ["Свой навык"] and p.stop_words == ["моё"] and p.criteria == "Мои слова"

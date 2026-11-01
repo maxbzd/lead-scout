@@ -99,8 +99,8 @@ def finalize(score: Score, order: OrderView, profile: Profile, flags: list[Flag]
         why = high[0].text + ". Рекомендую пропустить."
         fit = [{"ok": False, "text": f.text} for f in all_flags] + [x for x in fit if x.get("ok")]
     elif hit:
-        s, verdict = _demote(s, recall)
-        why = (f"Показываю на всякий случай: в заказе стоп-слово «{hit}»." if recall else f"В заказе есть стоп-слово «{hit}».")
+        s, verdict = min(s, 30), "skip"  # стоп-слово вы поставили сами: такие заказы уходят в «Отсеянные» (они там видны и возвращаются)
+        why = f"В заказе стоп-слово «{hit}», поэтому оно в «Отсеянных»."
         fit.insert(0, {"ok": False, "text": f"Стоп-слово из вашего списка: «{hit}»"})
     elif below_minimum(order, profile):
         s, verdict = _demote(s, recall)
