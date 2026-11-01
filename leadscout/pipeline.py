@@ -163,11 +163,14 @@ class Pipeline:
         row = self.db.one("SELECT * FROM messages WHERE id=?", (message_id,))
         if not row or self.db.one("SELECT 1 FROM orders WHERE message_id=?", (message_id,)):
             return None
+        was = row.get("note") or ""
         store.set_message_status(self.db, message_id, "new")
         self.teach(row.get("text") or "", True)
         raw = store.raw_from_row(row)
         raw.reply_to = None
-        return await self._process(raw, (raw.text or "").strip(), message_id, force=True)
+        oid = await self._process(raw, (raw.text or "").strip(), message_id, force=True)
+        self.db.run("UPDATE messages SET note=? WHERE id=?", (f"user:promote<{was}", message_id))  # запоминаем, что здесь бот ошибся
+        return oid
 
     async def _process(self, raw: RawMessage, text: str, mid: int, force: bool = False) -> int | None:
         chat = self.db.one("SELECT * FROM chats WHERE id=?", (raw.chat_id,)) or {}
@@ -187,7 +190,7 @@ class Pipeline:
             strict = self._is_candidate(text)
             lenient = force or (not strict and self._recall() and ex.maybe_order(text))
             if not strict and not lenient:
-                store.set_message_status(self.db, mid, "noise")
+                store.set_message_status(self.db, mid, "noise", "gate:no")
                 return None
         if self._attach_duplicate(raw, mid, text, chat):
             return None
@@ -228,7 +231,7 @@ class Pipeline:
                 ext.is_order = True
                 ext.flags = [*ext.flags, ex.Flag("doubt", "Не уверен, что это заказ: похоже по формулировке", "low")]
             else:
-                store.set_message_status(self.db, mid, "noise")
+                store.set_message_status(self.db, mid, "noise", "ai:other" if judged else "gate:no")
                 return None
 
         profile = load_profile(self.db)
@@ -240,6 +243,10 @@ class Pipeline:
             if self._attach_duplicate(raw, mid, text, chat):
                 return None
             order_id = self._save(mid, raw, ext, view, score, profile, chat)
+            if not force:  # как решили: для разбора ошибок в выгрузке работы ИИ
+                doubt = any(f.code == "doubt" for f in ext.flags)
+                decision = ("ai:order?" if verdict.unsure else "ai:order") if verdict is not None else ("gate:maybe" if doubt else "gate:order")
+                self.db.run("UPDATE messages SET note=? WHERE id=?", (decision, mid))
         await self._pre_draft(order_id, view, profile, score)
         return order_id
 

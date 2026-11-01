@@ -39,6 +39,11 @@ export async function renderProfile() {
   paint(view, html`<section class="view"><div class="set" style="margin-top:14px">
     <div class="seg psegs" id="psegs" role="tablist" aria-label="Разделы профиля"></div>
     <div class="psec" data-sec="me">
+    <div class="glass field">
+      <div class="mono">какие заказы мне нужны</div>
+      <p class="capnote">Опишите своими словами: что берёте, от чего отказываетесь. ИИ учитывает это при каждом решении, это главная настройка точности.</p>
+      <textarea id="criteria" class="pos" maxlength="2000" rows="6" data-bind="criteria" placeholder="Нужны: Telegram-боты и ИИ-ассистенты для бизнеса, автоматизация в n8n и Make, RAG по документам.&#10;Не нужны: сайты на Тильде, SMM, дизайн, вакансии в штат, консультации, всё дешевле 20 000 ₽, заказы без ТЗ и без бюджета.">${p.criteria || ''}</textarea>
+    </div>
     <div class="glass">
       <div class="sw-row"><div><div class="t">Ничего не пропускать</div><div class="s">Сомнительные заказы тоже показываю с пометкой. Всё, что бот отбросил, лежит в ленте в разделе «Отброшено».</div></div>
         <button class="sw" id="recall-sw" role="switch" aria-checked="${!!p.recall}" data-act="recall-toggle" aria-label="Ничего не пропускать"></button></div>
@@ -289,6 +294,8 @@ export function paintUpdate() {
   paint(el, html`<div class="mono">программа на компьютере</div>
     <div class="sw-row"><div><div class="t">Scout ${u.current}</div><div class="s">${state}</div></div>${act}</div>
     ${auto}
+    <div class="sw-row"><div><div class="t">Работа ИИ</div><div class="s">Файл с подсказками ИИ, его решениями по каждому сообщению и вашими исправлениями. Покажите его, чтобы настроить точность</div>
+      <label class="chk"><input type="checkbox" id="export-hide" checked data-act="export-hide"> скрыть ники, ссылки и телефоны</label></div><a class="btn small" id="export-ai" href="/api/export/ai?redact=1" download>Выгрузить</a></div>
     <div class="sw-row"><div><div class="t">Копия данных</div><div class="s">Все заказы, оценки и настройки одним файлом. Ключи и пароли в копию не попадают</div></div><a class="btn small" href="/api/backup" download>Сохранить</a></div>`);
 }
 
@@ -461,6 +468,7 @@ export const profileActions = {
     deferredInstall = null;
     paintInstall();
   },
+  'export-hide': (el) => { const a = $('#export-ai'); if (a) a.href = `/api/export/ai?redact=${el.checked ? 1 : 0}`; },
   'autostart-toggle': async () => {
     const r = await put('/autostart', { on: !S.status.autostart.enabled });
     S.status.autostart = r;
@@ -497,6 +505,7 @@ export function onProfileInput(el) {
   if (bind === 'min') { S.profile.min_budget = Math.round(+el.value) * 1000; sliderFill(el); $('#min-v').textContent = money(S.profile.min_budget); $('#cap-note').textContent = `Показываю заказы от ${money(S.profile.min_budget)}. Всё, что дешевле, убираю в «Отсеянные».`; S.profile.capacity = 'free'; changed(); }
   else if (bind === 'rate') { S.profile.day_rate = Math.round(+el.value * 1000); sliderFill(el); $('#rate-v').textContent = money(S.profile.day_rate); changed(); }
   else if (bind === 'bio') { S.profile.bio = el.value; changed(); }
+  else if (bind === 'criteria') { S.profile.criteria = el.value; changed(); }
   else if (bind === 'tz') { S.profile.tz = el.value; changed(); }
   else if (['quiet_start', 'quiet_end', 'digest_time'].includes(bind)) { if (el.value) { S.notif[bind] = el.value; saveNotif(); } }
 }
