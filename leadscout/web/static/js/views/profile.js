@@ -265,7 +265,12 @@ export function paintUpdate() {
   const act = u.available && u.can_install ? html`<button class="btn pri small" type="button" data-act="update-install">Обновить</button>`
     : u.available ? html`<span class="capnote">Скачайте свежий установщик с GitHub: из запуска файлом обновить кнопкой нельзя.</span>`
       : html`<button class="btn small" type="button" data-act="update-check">Проверить</button>`;
-  paint(el, html`<div class="mono">обновления</div><div class="sw-row"><div><div class="t">Scout ${u.current}</div><div class="s">${state}</div></div>${act}</div>`);
+  const a = S.status.autostart;
+  const auto = a?.supported ? html`<div class="sw-row"><div><div class="t">Запускать вместе с Windows</div><div class="s">Программа стартует в фоне без окна: проверяет чаты по расписанию и принимает действия с телефона. Откроете её значком</div></div><button class="sw" role="switch" aria-checked="${a.enabled}" data-act="autostart-toggle" aria-label="Запускать вместе с Windows"></button></div>` : '';
+  paint(el, html`<div class="mono">программа на компьютере</div>
+    <div class="sw-row"><div><div class="t">Scout ${u.current}</div><div class="s">${state}</div></div>${act}</div>
+    ${auto}
+    <div class="sw-row"><div><div class="t">Копия данных</div><div class="s">Все заказы, оценки и настройки одним файлом. Ключи и пароли в копию не попадают</div></div><a class="btn small" href="/api/backup" download>Сохранить</a></div>`);
 }
 
 function paintInstall() {
@@ -435,6 +440,12 @@ export const profileActions = {
     await deferredInstall.userChoice.catch(() => {});
     deferredInstall = null;
     paintInstall();
+  },
+  'autostart-toggle': async () => {
+    const r = await put('/autostart', { on: !S.status.autostart.enabled });
+    S.status.autostart = r;
+    paintUpdate();
+    toast(r.enabled ? 'Включено: программа будет стартовать вместе с Windows' : 'Автозапуск выключен');
   },
   'update-check': async () => {
     S.status.update = await post('/update/check');

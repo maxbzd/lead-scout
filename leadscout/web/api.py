@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import tempfile
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import learning, present, stats, store
+from .. import autostart, learning, present, stats, store
 from ..bot import BotError
 from ..cloud import CloudError
 from ..llm.base import LLMUnavailable
@@ -327,6 +331,7 @@ def status(request: Request) -> dict:
         "local": rt.settings.local,
         "cloud": rt.cloud.status(),
         "update": rt.updater.status() if rt.settings.local else None,
+        "autostart": {"supported": autostart.supported(), "enabled": autostart.enabled()} if rt.settings.local else None,
     }
 
 
@@ -663,6 +668,34 @@ def _local(request: Request) -> Runtime:
     if not rt.settings.local:
         raise HTTPException(404, "Не найдено")
     return rt
+
+
+class AutostartIn(BaseModel):
+    on: bool
+
+
+@router.put("/autostart")
+def set_autostart(body: AutostartIn, request: Request) -> dict:
+    _local(request)
+    if not autostart.supported():
+        raise UpdateError("Автозапуск работает только в установленной программе для Windows")
+    try:
+        autostart.set_enabled(body.on)
+    except OSError as e:
+        raise UpdateError("Windows не разрешил изменить автозапуск") from e
+    return {"supported": True, "enabled": autostart.enabled()}
+
+
+@router.get("/backup")
+def backup(request: Request, background: BackgroundTasks) -> FileResponse:
+    """Копия базы одним файлом (без ключей: они лежат отдельно и в копию не попадают)."""
+    rt = _local(request)
+    folder = Path(tempfile.mkdtemp(prefix="scout-backup-"))
+    target = folder / "scout-backup.db"
+    rt.db.backup_to(target)
+    background.add_task(shutil.rmtree, folder, True)
+    name = f"scout-backup-{datetime.now().strftime('%Y-%m-%d')}.db"
+    return FileResponse(target, media_type="application/octet-stream", filename=name)
 
 
 @router.post("/update/check")
