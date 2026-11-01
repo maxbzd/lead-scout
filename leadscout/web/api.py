@@ -162,7 +162,7 @@ def _discarded_feed(rt: Runtime, q: str, limit: int) -> dict:
             "id": r["id"], "kind": "message", "text": r["text"][:900], "chat": r["chat_title"], "age_label": age,
             "author": ("@" + r["author_username"]) if r["author_username"] else (r["author_name"] or ""),
             "link": store.chat_link({"username": r["chat_username"], "tg_id": r["chat_tg"]}, r["tg_msg_id"]),
-            "demo": bool(r["chat_demo"]),
+            "demo": bool(r["chat_demo"]), "why": store.why_discarded(r.get("note")),
         })
     counts, hot_sum = _counts(rt)
     return {"items": items, "counts": counts, "hot_sum": hot_sum, "kind": "messages",
