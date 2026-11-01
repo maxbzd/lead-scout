@@ -518,7 +518,7 @@ class Runtime:
                 ("upgrade", self.pipeline.upgrade_with_ai() if not manual else None),  # при ручной проверке ИИ работает сразу после неё
                 ("maintenance", self._maintenance()),
                 ("cloud", self.cloud.cycle() if self.app is not None else None),
-                ("update", self.updater.check(time.monotonic()) if self.settings.local and self.updater.due(time.monotonic()) else None),
+                ("update", self._check_update() if self.settings.local and self.updater.due(time.monotonic()) else None),
             ]
             for name, coro in steps:  # сбой одного шага не должен останавливать остальные
                 if coro is None:
@@ -530,6 +530,13 @@ class Runtime:
                 except Exception:
                     log.exception("scheduler step %s failed", name)
             await asyncio.sleep(20)
+
+    async def _check_update(self) -> None:
+        """Раз в полчаса смотрим, не вышла ли новая версия; если вышла, окно тут же покажет кнопку."""
+        before = self.updater.status()["available"]
+        after = (await self.updater.check(time.monotonic()))["available"]
+        if before != after:
+            self.bus.publish({"type": "status"})
 
     async def _reconnect_bot(self) -> None:
         """Бот не поднялся при запуске (нет сети): пробуем снова раз в несколько минут, кроме случая неверного токена."""

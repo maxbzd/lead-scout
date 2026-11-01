@@ -130,3 +130,16 @@ def test_server_mode_has_no_update_buttons(client):
 def test_update_needs_the_csrf_header(tmp_path):
     with local(tmp_path) as c:
         assert c.post("/api/update/install").status_code == 403
+
+
+def test_runtime_announces_a_new_version_to_the_open_window(tmp_path):
+    with local(tmp_path) as c:
+        rt = c.app.state.rt
+        rt.updater = make(api_ok(release("app-9")))
+        q = rt.bus.open_queue()
+        c.portal.call(rt._check_update)
+        assert q.get_nowait() == {"type": "status"}
+        c.portal.call(rt._check_update)
+        assert q.empty()  # ничего не изменилось: окно не дёргаем
+        assert not rt.updater.due(rt.updater._mono + 10)
+        assert rt.updater.due(rt.updater._mono + updater.CHECK_EVERY + 1)

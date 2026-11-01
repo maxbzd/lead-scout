@@ -21,7 +21,7 @@ log = logging.getLogger("leadscout.updater")
 REPO = os.environ.get("LS_UPDATE_REPO", "maxbzd/lead-scout")
 ASSET = "Scout-Setup.exe"
 TAG = re.compile(r"^app-(\d+)$")
-CHECK_EVERY = 6 * 3600
+CHECK_EVERY = 30 * 60
 MAX_SIZE = 400 * 1024 * 1024
 VERSION = f"1.0.{BUILD}"
 
