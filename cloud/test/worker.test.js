@@ -207,6 +207,40 @@ test('проверка чатов и возврат из «Отброшено» 
   assert.deepEqual(cmds.map((c) => c.path), ['/scan', '/discarded/900/promote']);
 });
 
+test('удаление: выбранные, всё во вкладке (кроме отложенного) и отброшенные идут в очередь для компьютера', async () => {
+  await sync('/ack', 'POST', { done: (await sync('/commands')).data.items.map((c) => c.id) });
+  await sync('/push', 'POST', {
+    orders: [order(50), order(51), order(52), order(53, { state: 'saved' }), order(54, { offered: true })],
+    discarded: [
+      { id: 950, posted_at: new Date().toISOString(), search: 'мусор один', item: { id: 950, kind: 'message', text: 'мусор один', chat: 'Чат', age_label: '1 мин' } },
+      { id: 951, posted_at: new Date().toISOString(), search: 'мусор два', item: { id: 951, kind: 'message', text: 'мусор два', chat: 'Чат', age_label: '1 мин' } },
+    ],
+  });
+  const before = (await api('/orders')).data.counts.all;
+  const one = await api('/orders/delete', 'POST', { ids: [50, 50, 'x', -3, 999999], notorder: true });
+  assert.equal(one.data.deleted, 2); // повторы и мусор отброшены, несуществующий номер ставится в очередь, но на сайте ничего не удаляет
+  assert.equal((await api('/orders')).data.counts.all, before - 1);
+  const cmds = (await sync('/commands')).data.items;
+  assert.equal(cmds.length, 1);
+  assert.equal(cmds[0].path, '/orders/delete');
+  assert.deepEqual(cmds[0].body, { ids: [50, 999999], notorder: true });
+
+  const all = await api('/orders/delete', 'POST', { all: true, filter: 'all' });
+  const left = (await api('/orders?filter=all')).data.items.map((o) => o.id).sort();
+  assert.ok(all.data.deleted >= 1);
+  assert.ok(left.includes(53) && left.includes(54), 'отложенное и то, на что откликнулись, не удаляется');
+  assert.ok(!left.includes(51) && !left.includes(52));
+
+  const d = await api('/discarded/delete', 'POST', { ids: [950] });
+  assert.equal(d.data.deleted, 1);
+  assert.equal((await api('/orders?filter=discarded')).data.items.some((x) => x.id === 950), false);
+  const dAll = await api('/discarded/delete', 'POST', { all: true });
+  assert.ok(dAll.data.deleted >= 1);
+  assert.equal((await api('/orders?filter=discarded')).data.items.length, 0);
+  const paths = (await sync('/commands')).data.items.map((c) => c.path);
+  assert.deepEqual(paths.filter((x) => x.endsWith('/delete')), ['/orders/delete', '/orders/delete', '/discarded/delete', '/discarded/delete']);
+});
+
 test('подключения и чаты меняются только на компьютере', async () => {
   for (const [path, method] of [['/connect/telegram/api', 'POST'], ['/connect/ai', 'POST'], ['/chats', 'POST'], ['/demo', 'POST'], ['/profile/import', 'POST']]) {
     const r = await api(path, method, {});

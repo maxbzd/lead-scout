@@ -218,6 +218,40 @@ async function enqueue(env, method, path, body, { replace = false } = {}) {
   await env.DB.batch(stmts);
 }
 
+// D1 принимает не больше 100 значений в запросе: удаляем порциями
+async function deleteRows(env, table, ids) {
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    await env.DB.prepare(`DELETE FROM ${table} WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).run();
+  }
+}
+
+async function deleteMany(env, table, body) {
+  let ids;
+  if (body.all) {
+    const text = String(body.q || '').trim();
+    const args = [];
+    let sql;
+    if (table === 'orders') {
+      const filter = FILTERS[body.filter] ? body.filter : 'all';
+      sql = `SELECT id FROM orders WHERE ${FILTERS[filter]}`;
+      if (!['saved', 'offered', 'rated'].includes(filter)) sql += " AND state!='saved' AND offered=0 AND stage IS NULL"; // отложенное и то, на что откликнулись, остаётся
+      if (text) { sql += " AND search LIKE ? ESCAPE '\\'"; args.push(`%${likeEscape(text)}%`); }
+    } else {
+      sql = 'SELECT id FROM discarded';
+      if (text) { sql += " WHERE search LIKE ? ESCAPE '\\'"; args.push(`%${likeEscape(text)}%`); }
+    }
+    ids = (await env.DB.prepare(sql).bind(...args).all()).results.map((r) => r.id);
+  } else {
+    ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).filter((x) => Number.isInteger(x) && x > 0))].slice(0, 2000);
+  }
+  await deleteRows(env, table, ids);
+  for (let i = 0; i < ids.length; i += 400) {
+    await enqueue(env, 'POST', `/${table}/delete`, { ids: ids.slice(i, i + 400), notorder: !!body.notorder });
+  }
+  return ids.length;
+}
+
 async function mutateOrder(env, id, action, arg, command) {
   const row = await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
   if (!row) throw new HttpError(404, 'Заказ не найден');
@@ -401,6 +435,8 @@ async function handleApi(req, env, url, ip) {
     const card = await mutateOrder(env, id, act, body, command);
     return json(act === 'feedback' ? { order: card, learned: 0 } : { order: card });
   }
+  m = path.match(/^\/(orders|discarded)\/delete$/);
+  if (m && method === 'POST') return json({ deleted: await deleteMany(env, m[1], await readBody(req, 100_000)) });
   m = path.match(/^\/discarded\/(\d{1,15})\/promote$/);
   if (m && method === 'POST') {
     const id = Number(m[1]);

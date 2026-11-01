@@ -150,7 +150,7 @@ def set_message_status(db: Database, message_id: int, status: str, note: str | N
     db.run("UPDATE messages SET status=?, note=? WHERE id=?", (status, note, message_id))
 
 
-KIND_LABELS = {"offer": "предложение услуг", "vacancy": "вакансия в штат", "ad": "реклама", "chat": "обсуждение", "rules": "правила чата"}
+KIND_LABELS = {"other": "не заказ", "offer": "предложение услуг", "vacancy": "вакансия в штат", "ad": "реклама", "chat": "обсуждение", "rules": "правила чата"}
 
 
 def why_discarded(note: str | None) -> str:
@@ -162,6 +162,32 @@ def why_discarded(note: str | None) -> str:
     if who == "rule" and label:
         return f"по правилам: {label}"
     return "не похоже на заказ"
+
+
+def delete_orders(db: Database, ids: list[int]) -> list[dict]:
+    """Удаляем заказы. Сообщение остаётся с пометкой «удалено»: при следующей проверке оно не вернётся в ленту."""
+    gone: list[dict] = []
+    for i in range(0, len(ids), 400):
+        part = [int(x) for x in ids[i: i + 400]]
+        marks = ",".join("?" * len(part))
+        rows = db.all(f"SELECT o.id, o.message_id, m.text FROM orders o JOIN messages m ON m.id=o.message_id WHERE o.id IN ({marks})", part)
+        if not rows:
+            continue
+        mids = [r["message_id"] for r in rows]
+        mm = ",".join("?" * len(mids))
+        db.run(f"UPDATE messages SET status='deleted', note='user:deleted' WHERE id IN ({mm})", mids)
+        db.run(f"DELETE FROM orders WHERE id IN ({','.join('?' * len(rows))})", [r["id"] for r in rows])
+        gone += rows
+    return gone
+
+
+def delete_messages(db: Database, ids: list[int]) -> int:
+    """Убираем отброшенные сообщения из списка «Отброшено» (сами записи остаются, чтобы не вернуться при проверке)."""
+    n = 0
+    for i in range(0, len(ids), 400):
+        part = [int(x) for x in ids[i: i + 400]]
+        n += db.run(f"UPDATE messages SET status='deleted', note='user:deleted' WHERE status='noise' AND id IN ({','.join('?' * len(part))})", part)
+    return n
 
 
 def bump_chat_cursor(db: Database, chat_id: int, tg_msg_id: int) -> None:
@@ -339,7 +365,7 @@ def purge_old(db: Database, days: int = 60) -> int:
         "AND o.stage IS NULL AND o.state NOT IN ('saved') AND o.offered_at IS NULL)", (cutoff,))
     # болтовня, повторы и ответы нужны только неделю («Отброшено» показывает последние 7 дней), иначе база пухнет от оживлённых чатов
     db.run(
-        "DELETE FROM messages WHERE posted_at<? AND status IN ('noise','reply','new','dup') "
+        "DELETE FROM messages WHERE posted_at<? AND status IN ('noise','reply','new','dup','deleted') "
         "AND id NOT IN (SELECT message_id FROM orders)",
         (iso(now_utc() - timedelta(days=DISCARDED_DAYS + 1)),),
     )
