@@ -2,11 +2,11 @@
 
 import { api, on } from './api.js';
 import { S, cache, loadProfile, loadStatus } from './state.js';
-import { $, $$, closeSheet, debounce, html, I, onPopState, paint, sheetHooks, sheetOpen, toast } from './ui.js';
+import { $, $$, closeSheet, debounce, html, I, isWide, onPopState, paint, sheetHooks, sheetOpen, toast } from './ui.js';
 import { chatActions } from './views/chats.js';
 import { connectActions } from './views/connect.js';
 import { detailActions, openOrder, priceActions } from './views/detail.js';
-import { feedActions, onNewOrders, refreshFeed, renderFeed, updateScanPill } from './views/feed.js';
+import { currentSel, feedActions, moveSel, onNewOrders, refreshFeed, renderFeed, runScan, updateScanPill } from './views/feed.js';
 import { onProfileInput, profileActions, renderProfile } from './views/profile.js';
 import { renderStats, statsActions } from './views/stats.js';
 
@@ -56,6 +56,7 @@ async function submitLogin(e) {
 async function show(tab, { push = true } = {}) {
   if (!TABS.includes(tab)) tab = 'feed';
   S.tab = tab;
+  document.body.dataset.tab = tab;
   $$('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.v === tab)));
   $('#search-btn').hidden = tab !== 'feed';
   if (tab !== 'feed') $('#sbar').hidden = true;
@@ -154,8 +155,35 @@ function onClick(e) {
   Promise.resolve(fn(el, e)).catch((x) => toast(x?.message || 'Не получилось. Попробуйте ещё раз'));
 }
 
+// Горячие клавиши на компьютере: j/k выбор заказа, Enter открыть, s отложить, u подходит, d не подходит, / поиск, r проверить чаты
+const typing = (t) => t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
+
+function shortcut(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey || typing(e.target) || S.tab !== 'feed') return false;
+  const modal = sheetOpen() && !$('#veil').classList.contains('docked');
+  if (modal) return false;
+  const act = (name) => { const id = currentSel(); if (id != null) document.querySelector(`.card[data-id="${id}"] [data-act="${name}"]`)?.click(); };
+  switch (e.key) {
+    case 'j': case 'k': {
+      const id = moveSel(e.key === 'j' ? 1 : -1);
+      if (id != null && isWide()) openOrder(id).catch(() => {});
+      break;
+    }
+    case 'Enter': case 'o': { const id = currentSel(); if (id == null) return false; openOrder(id).catch(() => {}); break; }
+    case 's': act('bm'); break;
+    case 'u': act('up'); break;
+    case 'd': act('dn'); break;
+    case '/': $('#search-btn').click(); break;
+    case 'r': runScan().catch(() => {}); break;
+    default: return false;
+  }
+  e.preventDefault();
+  return true;
+}
+
 function onKey(e) {
   if (e.key === 'Escape' && sheetOpen()) { closeSheet(); return; }
+  if (shortcut(e)) return;
   const t = e.target;
   if (e.key === 'Enter' && !e.shiftKey && t.tagName === 'INPUT') {
     const named = t.dataset.enter;

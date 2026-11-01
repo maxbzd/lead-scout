@@ -137,7 +137,9 @@ class BotService:
         return bool(self.owner_id)
 
     def app_url(self, order_id: int | None = None) -> str | None:
-        base = self.settings.public_url
+        # с облачным сайтом кнопки в Telegram ведут на него: он открывается на телефоне, когда компьютер выключен
+        cloud = self.settings.cloud_url or (self.db.get_setting("cloud_config") or {}).get("url") or ""
+        base = (cloud or self.settings.public_url).rstrip("/")
         if not base.startswith("https://"):
             return None
         return f"{base}/#/o/{order_id}" if order_id else base
@@ -320,7 +322,7 @@ class BotService:
             await self.send_text("Уведомления включены.")
         elif cmd == "/app":
             url = self.app_url()
-            await self.send_text("Приложение: " + esc(url) if url else "Адрес приложения не задан в настройках сервера (LS_PUBLIC_URL).")
+            await self.send_text("Приложение: " + esc(url) if url else "Адрес сайта не задан: подключите облачный сайт в Профиле (или задайте LS_PUBLIC_URL).")
         elif cmd in {"/help", "/?"}:
             await self.send_text("/digest · /stats · /chats · /add ссылка · /pause · /resume · /app")
         elif text.startswith("https://t.me/") or text.startswith("t.me/"):

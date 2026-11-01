@@ -47,7 +47,7 @@ def open_window(url: str) -> None:
     browser = find_browser()
     if browser:
         try:
-            subprocess.Popen([browser, f"--app={url}", "--window-size=460,900"], close_fds=True)
+            subprocess.Popen([browser, f"--app={url}", "--window-size=1280,860"], close_fds=True)
             return
         except OSError:
             pass

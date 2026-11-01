@@ -262,3 +262,13 @@ async def test_botapi_error_mapping():
         await api.call("getMe")
     assert "Токен" in str(e.value) and e.value.code == 401
     assert await api.call("sendMessage", chat_id=1, text="x", reply_markup=None) == {"x": 1}
+
+
+def test_buttons_lead_to_the_cloud_site_when_it_is_connected(bot, db):
+    svc, _ = bot
+    assert svc.app_url(5) == "https://scout.example.com/#/o/5"
+    db.set_setting("cloud_config", {"url": "https://scout.me.workers.dev"})
+    assert svc.app_url(5) == "https://scout.me.workers.dev/#/o/5"
+    assert svc.app_url() == "https://scout.me.workers.dev"
+    db.set_setting("cloud_config", {"url": "http://localhost:8788"})  # не https: ссылка в Telegram всё равно не откроется
+    assert svc.app_url(5) is None

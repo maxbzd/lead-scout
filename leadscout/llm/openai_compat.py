@@ -32,7 +32,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "Google Gemini (бесплатно)", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "model": "gemini-3.5-flash-lite", "rpm": 12, "rpd": 900, "needs_key": True,
         "key_url": "https://aistudio.google.com/apikey",
-        "note": "Бесплатный ключ берётся в Google AI Studio. Сервер должен стоять в стране, где Gemini доступен.",
+        "note": "Бесплатный ключ берётся в Google AI Studio. Компьютер должен находиться в стране, где Gemini доступен (иначе нужен VPN).",
     },
     "groq": {
         "label": "Groq (бесплатно)", "base_url": "https://api.groq.com/openai/v1",
