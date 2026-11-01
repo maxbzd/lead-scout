@@ -3,11 +3,21 @@ name: Windows app
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
-    branches: [release]  # пуш в ветку release собирает установщик и выкладывает его в Releases
+    branches: [main, release]
+    # новая версия собирается сама при каждом изменении самой программы; правки документации и тестов её не пересобирают
+    paths:
+      - "leadscout/**"
+      - "packaging/**"
+      - "requirements.lock"
+      - "pyproject.toml"
+      - ".github/workflows/windows-app.yml"
 
 permissions:
   contents: write
+
+concurrency:
+  group: windows-app
+  cancel-in-progress: false
 
 jobs:
   build:
