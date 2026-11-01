@@ -192,3 +192,56 @@ def test_thumbs_up_teaches_a_positive_example(authed):
     authed.post(f"/api/orders/{oid}/feedback", json={"kind": "up"}, headers=H)
     yes, no = classify.examples(rt.db)
     assert len(yes) == 1 and not no
+
+
+class Quota:
+    """Двойник счётчика бесплатного ИИ."""
+
+    def __init__(self, rpd, used):
+        self.rpd, self._used = rpd, used
+
+    def used_today(self):
+        return self._used
+
+
+def many(n):
+    return [f"Нужен разработчик для проекта номер {i}, бюджет {20 + i} 000 руб, пишите в личку @cust{i}x" for i in range(n)]
+
+
+def test_free_daily_limit_keeps_a_reserve_for_scoring(db, settings, chat_id):
+    p = Pipeline(db, FakeAI(), settings)
+    p.ai_on = lambda: True
+    p.llm.primary = Quota(rpd=900, used=700)  # осталось 200, резерв 270: на чтение пачками ничего не выделяем
+    run(ingest(p, chat_id, many(30)))
+    assert p.llm.calls == []
+
+
+def test_free_limit_reads_the_newest_messages_first(db, settings, chat_id):
+    p = Pipeline(db, FakeAI(), settings)
+    p.ai_on = lambda: True
+    p.llm.primary = Quota(rpd=900, used=900 - 270 - 1)  # ровно одна пачка сверх резерва
+    texts = many(40)
+
+    async def go():
+        raws = [make_raw(chat_id, t, minutes_ago=100 - i, author=f"u{i}", author_id=10 + i) for i, t in enumerate(texts)]  # чем больше номер, тем свежее
+        await p.prejudge(raws)
+
+    run(go())
+    assert len(p.llm.calls) == 1
+    sent = p.llm.calls[0]["texts"]
+    assert len(sent) == classify.BATCH and texts[-1] in sent and texts[0] not in sent
+
+
+def test_paid_claude_is_capped_per_scan_not_per_day(db, settings, chat_id):
+    p = Pipeline(db, FakeAI(), settings)
+    p.ai_on = lambda: True
+    assert p._classify_budget() == classify.MAX_BATCHES
+
+
+def test_progress_is_reported_while_the_ai_reads_and_cleared_after(db, settings, chat_id):
+    p = Pipeline(db, FakeAI(), settings)
+    p.ai_on = lambda: True
+    seen = []
+    p.on_progress = lambda: seen.append(p.progress)
+    run(ingest(p, chat_id, many(40)))
+    assert seen[:3] == [(0, 3), (1, 3), (2, 3)] and p.progress is None and seen[-1] is None
