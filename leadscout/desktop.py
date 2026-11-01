@@ -66,9 +66,41 @@ def alive(port: int) -> bool:
         return False
 
 
+DEFAULT_PORT = 8731  # редкий порт: не мешает другим программам, а адрес окна не меняется между запусками
+MAX_LOG = 3 * 1024 * 1024
+
+
+def _rotate(path) -> None:
+    try:
+        if path.stat().st_size > MAX_LOG:
+            path.replace(path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+
+
+def _fatal(message: str) -> None:
+    """Программа без консоли не может написать об ошибке в окне терминала: показываем окно Windows."""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "Scout", 0x10)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except Exception:
+        logging.getLogger("leadscout").exception("Scout не запустился")
+        _fatal("Scout не запустился.\n\nПодробности записаны в файл scout.log в папке .leadscout вашей домашней папки. Пришлите его, и я разберусь.")
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     background = "--background" in (sys.argv[1:] if argv is None else argv)  # запуск вместе с Windows: окно не открываем
     os.environ["LS_LOCAL"] = "1"
+    os.environ.setdefault("LS_PORT", str(DEFAULT_PORT))
     from .config import Settings
 
     settings = Settings.load()
@@ -78,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     # без консоли у программы нет stdout: пишем журнал в файл, иначе любой print уронил бы её
     log_path = settings.data_dir / "scout.log"
     if sys.stdout is None or sys.stderr is None or getattr(sys, "frozen", False):
+        _rotate(log_path)
         stream = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         sys.stdout = sys.stderr = stream
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stderr, force=True)

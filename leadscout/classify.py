@@ -14,6 +14,7 @@ from .db import Database
 from .profile import Profile
 from .util import clip, squash
 
+MAX_BATCHES = 200  # потолок за одну проверку: бережёт и бесплатный лимит, и деньги за Claude
 BATCH = 15  # сколько сообщений читает один запрос: меньше обращений к ИИ, а бесплатные лимиты считают именно их
 MSG_CHARS = 600
 EXAMPLES_KEY = "classify_examples"

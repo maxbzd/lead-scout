@@ -47,6 +47,8 @@ class Pipeline:
         self._ai_state = True
         self._pending: dict[str, asyncio.Event] = {}  # тексты, которые разбираются прямо сейчас
         self._verdicts: dict[tuple[int, int], classify.Verdict] = {}  # что ИИ решил про сообщения до разбора
+        self.progress: tuple[int, int] | None = None  # (прочитано пачек, всего): окно показывает, как идёт чтение ИИ
+        self.on_progress = None
         self._ai_fail: dict[int, tuple[int, float]] = {}  # заказ -> (число неудач ИИ, когда пробовать снова)
 
     def set_llm(self, llm: LLM) -> None:
@@ -56,6 +58,16 @@ class Pipeline:
     def teach(self, text: str, is_order: bool) -> None:
         """Ваше решение («Это заказ», 👍, «Это не заказ») становится примером для ИИ."""
         classify.teach(self.db, text, is_order)
+
+    def _classify_budget(self) -> int:
+        """Сколько запросов на чтение пачками можно потратить сейчас. У бесплатного ИИ суточный лимит: часть бережём на оценки и отклики."""
+        primary = getattr(self.llm, "primary", None)
+        rpd = getattr(primary, "rpd", None)
+        if not rpd:
+            return classify.MAX_BATCHES  # платный Claude: ограничиваем только размер одной проверки
+        left = rpd - primary.used_today()
+        reserve = max(60, int(rpd * 0.3))
+        return max(0, min(classify.MAX_BATCHES, left - reserve))
 
     async def prejudge(self, raws: list[RawMessage]) -> None:
         """ИИ читает новые сообщения пачками и решает, какие из них заказы. Не получилось: решат правила отбора."""
@@ -75,19 +87,32 @@ class Pipeline:
             if row and row["status"] != "new":
                 continue  # уже разобрано (пришло и вживую, и при проверке)
             groups.setdefault(ex.content_hash(text), []).append(r)
-        heads = [g[0] for g in groups.values()]
-        for i in range(0, len(heads), classify.BATCH):
-            part = heads[i: i + classify.BATCH]
-            try:
-                verdicts = await self.llm.classify([(r.text or "").strip() for r in part], profile, yes, no)
-            except Exception:
-                log.exception("classify failed, rules decide")
-                return
-            for head, v in zip(part, verdicts, strict=True):
-                if v is None:
-                    continue
-                for r in groups[ex.content_hash((head.text or "").strip())]:
-                    self._verdicts[(r.chat_id, r.tg_msg_id)] = v
+        # сначала свежие: при нехватке запросов ИИ прочитает новое, а старое разберут правила
+        heads = sorted((g[0] for g in groups.values()), key=lambda r: r.posted_at, reverse=True)
+        heads = heads[: self._classify_budget() * classify.BATCH]
+        total = -(-len(heads) // classify.BATCH)
+        try:
+            for n, i in enumerate(range(0, len(heads), classify.BATCH)):
+                part = heads[i: i + classify.BATCH]
+                if total > 1:
+                    self._progress((n, total))
+                try:
+                    verdicts = await self.llm.classify([(r.text or "").strip() for r in part], profile, yes, no)
+                except Exception:
+                    log.exception("classify failed, rules decide")
+                    return
+                for head, v in zip(part, verdicts, strict=True):
+                    if v is None:
+                        continue
+                    for r in groups[ex.content_hash((head.text or "").strip())]:
+                        self._verdicts[(r.chat_id, r.tg_msg_id)] = v
+        finally:
+            self._progress(None)
+
+    def _progress(self, value: tuple[int, int] | None) -> None:
+        self.progress = value
+        if self.on_progress:
+            self.on_progress()
 
     # ----------------------------------------------------------- вход ----
     async def process(self, raw: RawMessage) -> int | None:
