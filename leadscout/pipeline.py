@@ -76,7 +76,6 @@ class Pipeline:
         if len(self._verdicts) > 2000:
             self._verdicts.clear()
         profile = load_profile(self.db)
-        yes, no = classify.examples(self.db)
         groups: dict[str, list[RawMessage]] = {}  # один и тот же текст из разных чатов читаем один раз
         for r in raws:
             text = (r.text or "").strip()
@@ -96,8 +95,10 @@ class Pipeline:
                 part = heads[i: i + classify.BATCH]
                 if total > 1:
                     self._progress((n, total))
+                batch = [(r.text or "").strip() for r in part]
+                yes, no = classify.examples(self.db, batch)
                 try:
-                    verdicts = await self.llm.classify([(r.text or "").strip() for r in part], profile, yes, no)
+                    verdicts = await self.llm.classify(batch, profile, yes, no)
                 except Exception:
                     log.exception("classify failed, rules decide")
                     return
