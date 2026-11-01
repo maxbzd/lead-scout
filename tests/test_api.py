@@ -193,6 +193,7 @@ def test_suggestion_to_raise_min_budget(authed):
     scan(authed)
     p = authed.get("/api/profile").json()["profile"]
     p["min_budget"] = 5000
+    p["ignore_budget"] = False
     authed.put("/api/profile", json=p, headers=H)
     items = authed.get("/api/orders?filter=all").json()["items"]
     cheap = sorted([o for o in items if o["budget"]["rub_max"] and o["budget"]["period"] == "fixed"], key=lambda o: o["budget"]["rub_max"])[:3]

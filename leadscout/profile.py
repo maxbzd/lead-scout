@@ -14,6 +14,15 @@ from .taxonomy import profile_keys
 CAPACITY_MIN_BUDGET = {"free": 20000, "busy": 40000, "full": 80000}
 
 
+DEFAULT_CRITERIA = (
+    "Нужны любые заказы, где работа связана с ИИ: чат-боты и ассистенты, автоматизация (n8n, Make), RAG и поиск по документам, "
+    "парсеры и скрипты с ИИ, ИИ-контент (картинки, видео, озвучка), консультации и обучение по ИИ, ИИ-сайты и дизайн с ИИ. "
+    "Цена не важна: показывай заказы любой цены и без цены.\n"
+    "Не нужны: вакансии и работа без ИИ (маркетолог, таргетолог, продюсер, SMM, менеджер и т. п.), реклама, предложения исполнителей, "
+    "болтовня. Пропустить настоящий заказ хуже всего, но откровенный мусор показывать не нужно."
+)
+
+
 class Case(BaseModel):
     title: str = Field(max_length=120)
     note: str = Field(default="", max_length=200)
@@ -21,13 +30,14 @@ class Case(BaseModel):
 
 
 class Profile(BaseModel):
-    skills: list[str] = Field(default_factory=lambda: ["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG"])
+    skills: list[str] = Field(default_factory=lambda: ["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG", "Парсеры и скрипты", "ИИ-контент (картинки, видео, озвучка)"])
     pay_types: list[str] = Field(default_factory=lambda: ["fixed", "hourly"])
     min_budget: int = Field(default=20000, ge=0, le=10_000_000)
     day_rate: int = Field(default=6000, ge=0, le=1_000_000)
     stop_words: list[str] = Field(default_factory=lambda: ["бесплатно", "залог", "тестовое без оплаты", "mlm"])
     bio: str = Field(default="", max_length=600)
-    criteria: str = Field(default="", max_length=2000)  # своими словами: какие заказы нужны и какие нет; ИИ учитывает это в каждом решении
+    ignore_budget: bool = True  # цена не влияет ни на показ, ни на оценку: показываем заказы любой цены и без цены
+    criteria: str = Field(default=DEFAULT_CRITERIA, max_length=2000)  # своими словами: какие заказы нужны и какие нет; ИИ учитывает это в каждом решении
     cases: list[Case] = Field(default_factory=list)
     tone: str = "warm"
     capacity: str = "free"
