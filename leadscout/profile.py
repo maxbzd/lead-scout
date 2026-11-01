@@ -14,13 +14,31 @@ from .taxonomy import profile_keys
 CAPACITY_MIN_BUDGET = {"free": 20000, "busy": 40000, "full": 80000}
 
 
-DEFAULT_CRITERIA = (
+LEGACY_CRITERIA = (
     "Нужны любые заказы, где работа связана с ИИ: чат-боты и ассистенты, автоматизация (n8n, Make), RAG и поиск по документам, "
     "парсеры и скрипты с ИИ, ИИ-контент (картинки, видео, озвучка), консультации и обучение по ИИ, ИИ-сайты и дизайн с ИИ. "
     "Цена не важна: показывай заказы любой цены и без цены.\n"
     "Не нужны: вакансии и работа без ИИ (маркетолог, таргетолог, продюсер, SMM, менеджер и т. п.), реклама, предложения исполнителей, "
     "болтовня. Пропустить настоящий заказ хуже всего, но откровенный мусор показывать не нужно."
 )
+DEFAULT_CRITERIA = (
+    "Нужны любые заказы, где работа связана с ИИ: чат-боты и ассистенты, автоматизация (n8n, Make), RAG и поиск по документам, "
+    "парсеры и скрипты с ИИ, ИИ-контент (картинки, видео, озвучка), консультации и обучение по ИИ, ИИ-сайты и дизайн с ИИ.\n"
+    "Сайты, лендинги и интернет-магазины тоже нужны, даже если про ИИ ни слова: если человек просит «сайт», это заказ. "
+    "Не нужны только сайты, где заказчик прямо просит конструктор (Тильда, Wix, Taplink и подобные).\n"
+    "Цена не важна: показывай заказы любой цены и без цены.\n"
+    "Не нужны: вакансии и работа без ИИ и без сайтов (маркетолог, таргетолог, продюсер, SMM, менеджер и т. п.), реклама, "
+    "предложения исполнителей, болтовня. Пропустить настоящий заказ хуже всего, но откровенный мусор показывать не нужно."
+)
+DEFAULT_SKILLS = ["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG", "Парсеры и скрипты", "ИИ-контент (картинки, видео, озвучка)", "Сайты и лендинги"]
+DEFAULT_STOP_WORDS = ["бесплатно", "залог", "тестовое без оплаты", "mlm", "тильд", "tilda", "wix", "taplink", "конструктор сайтов"]
+# прежние значения по умолчанию: если вы их не меняли, при загрузке заменяются на новые
+LEGACY_DEFAULTS: dict[str, list] = {
+    "criteria": [LEGACY_CRITERIA],
+    "skills": [["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG"],
+               ["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG", "Парсеры и скрипты", "ИИ-контент (картинки, видео, озвучка)"]],
+    "stop_words": [["бесплатно", "залог", "тестовое без оплаты", "mlm"]],
+}
 
 
 class Case(BaseModel):
@@ -30,11 +48,11 @@ class Case(BaseModel):
 
 
 class Profile(BaseModel):
-    skills: list[str] = Field(default_factory=lambda: ["Telegram-боты", "LLM и промпты", "n8n и автоматизация", "RAG", "Парсеры и скрипты", "ИИ-контент (картинки, видео, озвучка)"])
+    skills: list[str] = Field(default_factory=lambda: list(DEFAULT_SKILLS))
     pay_types: list[str] = Field(default_factory=lambda: ["fixed", "hourly"])
     min_budget: int = Field(default=20000, ge=0, le=10_000_000)
     day_rate: int = Field(default=6000, ge=0, le=1_000_000)
-    stop_words: list[str] = Field(default_factory=lambda: ["бесплатно", "залог", "тестовое без оплаты", "mlm"])
+    stop_words: list[str] = Field(default_factory=lambda: list(DEFAULT_STOP_WORDS))
     bio: str = Field(default="", max_length=600)
     ignore_budget: bool = True  # цена не влияет ни на показ, ни на оценку: показываем заказы любой цены и без цены
     criteria: str = Field(default=DEFAULT_CRITERIA, max_length=2000)  # своими словами: какие заказы нужны и какие нет; ИИ учитывает это в каждом решении
@@ -108,7 +126,10 @@ class Notifications(BaseModel):
 
 
 def load_profile(db: Database) -> Profile:
-    data = db.get_setting("profile") or {}
+    data = dict(db.get_setting("profile") or {})
+    for field, olds in LEGACY_DEFAULTS.items():
+        if field in data and data[field] in olds:
+            data.pop(field)  # вы это не меняли: берём новое значение по умолчанию
     try:
         return Profile(**data)
     except Exception:

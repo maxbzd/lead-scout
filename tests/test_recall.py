@@ -29,12 +29,16 @@ async def test_question_for_executor_is_an_order(pipe, db, chat_id):
     assert oid
 
 
-async def test_below_minimum_and_stop_word_stay_visible(pipe, db, chat_id):
-    save_profile(db, Profile(min_budget=100000, stop_words=["магазин"]))
+async def test_below_minimum_stays_visible_but_a_stop_word_excludes(pipe, db, chat_id):
+    save_profile(db, Profile(min_budget=100000, ignore_budget=False, stop_words=[]))
     oid = await pipe.process(make_raw(chat_id, "Нужен телеграм-бот с GPT для магазина. Бюджет 30 000 ₽, срок неделя. @owner_x"))
     row = store.get_order(db, oid)
     assert row["verdict"] == "maybe" and "на всякий случай" in row["why"]
     assert any(not f["ok"] for f in row["fit"])
+    save_profile(db, Profile(stop_words=["магазин"]))
+    oid = await pipe.process(make_raw(chat_id, "Нужен телеграм-бот с GPT для магазина электроники. Бюджет 80 000 ₽, срок неделя. @owner_y", author="o2", author_id=2))
+    row = store.get_order(db, oid)
+    assert row["verdict"] == "skip" and "стоп-слово" in row["why"]
 
 
 async def test_scam_is_still_flagged(pipe, db, chat_id):
