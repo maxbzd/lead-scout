@@ -197,7 +197,7 @@ function view() {
       const free = l.mode === 'ai';
       return html`${sheetHead('ИИ-режим включён')}
         <div class="okbox">${I.check}<div><b>${free ? `Подключено: ${l.model}` : 'Claude подключён'}</b><p>${l.error ? html`<span class="warn-t">Сейчас есть проблема: ${l.error}. Пока работаю по простым правилам.</span>` : 'Бот понимает смысл заказов и пишет отклики.'}</p>
-          ${free ? html`<p>Сегодня запросов: ${l.used_today} из ${l.limit_today}. Когда лимит кончится, бот до утра работает по правилам.</p>` : u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
+          ${free ? html`<p>${l.control?.unlimited ? `Сегодня запросов: ${l.used_today}. Лимиты приложения сняты: ограничивает только сам сервис.` : `Сегодня запросов: ${l.used_today} из ${l.limit_today}. Когда лимит кончится, бот до утра работает по правилам.`}</p>` : u ? html`<p>В этом месяце потрачено ≈ $${(u.usd || 0).toFixed(2)} (${u.calls} запросов).</p>` : ''}</div></div>
         ${free ? keysBlock(l) : ''}
         ${controlBlock(l.control)}
         <div class="btnrow">${l.source === 'app' ? html`<button class="btn danger" type="button" data-act="${free ? 'ai-free-off' : 'ai-off'}">Отключить</button>` : ''}<button class="btn pri" type="button" data-act="close">Готово</button></div>`;
@@ -214,7 +214,7 @@ function keysBlock(l) {
   const editable = l.source === 'app';
   return html`<div class="sec"><span class="mono">Ключи (${keys.length})</span>
     <p class="capnote" style="margin-top:8px">Запросы распределяются между ключами поровну, а когда у одного кончился лимит, бот берёт другой. Лимит считает сам сервис на проект: ключи из одного проекта делят один лимит, поэтому создавайте ключи в разных проектах.</p>
-    ${keys.map((k, i) => html`<div class="sw-row"><div><div class="t">${k.mask} <span class="st ${k.state === 'ok' ? 'ok' : 'off'}">${KEY_STATE[k.state] || k.state}</span></div><div class="s">сегодня ${k.used} из ${k.limit}</div></div>${editable ? html`<button class="btn small" type="button" data-act="ai-key-del" data-i="${i}">Убрать</button>` : ''}</div>`)}
+    ${keys.map((k, i) => html`<div class="sw-row"><div><div class="t">${k.mask} <span class="st ${k.state === 'ok' ? 'ok' : 'off'}">${KEY_STATE[k.state] || k.state}</span></div><div class="s">сегодня ${k.used}${k.limit >= 1000000 ? '' : ` из ${k.limit}`}</div></div>${editable ? html`<button class="btn small" type="button" data-act="ai-key-del" data-i="${i}">Убрать</button>` : ''}</div>`)}
     ${editable ? html`<label class="lbl" for="ai-add-key">Добавить ещё ключ</label><div class="row-inp"><input class="inp secret" id="ai-add-key" type="text" placeholder="Вставьте ключ" autocomplete="off" spellcheck="false"><button class="btn small" type="button" data-act="ai-key-add" ${C.busy ? raw('disabled') : ''}>Добавить</button></div>` : html`<p class="capnote">Ключи заданы в файле .env: менять их нужно там.</p>`}
     ${err()}
   </div>`;
@@ -225,6 +225,7 @@ function controlBlock(c) {
   const state = c.reason === 'manual' ? 'ИИ на паузе: вы поставили её вручную.' : c.reason === 'backlog' ? `ИИ на паузе сам: в ленте уже ${c.backlog} неразобранных заказов.` : `Неразобранных заказов в ленте: ${c.backlog}.`;
   return html`<div class="sec"><span class="mono">Пауза, чтобы не тратить запросы</span>
     <p class="capnote" style="margin-top:8px">${state} На паузе бот читает чаты и оценивает заказы бесплатными правилами. Черновики по вашему нажатию пишутся как обычно.</p>
+    <div class="sw-row"><div><div class="t">Без лимитов приложения</div><div class="s">Не ограничивать число запросов и чтение за проверку. Подходит для платного ключа. На бесплатном тарифе сервис сам откажет, когда лимит кончится, и бот до его сброса работает по правилам</div></div><button class="sw" role="switch" aria-checked="${!!c.unlimited}" data-act="ai-unlimited" aria-label="Без лимитов приложения"></button></div>
     <div class="sw-row"><div><div class="t">Пауза ИИ</div><div class="s">Выключить ИИ, пока вы не включите обратно</div></div><button class="sw" role="switch" aria-checked="${!!c.paused}" data-act="ai-pause" aria-label="Пауза ИИ"></button></div>
     <div class="sw-row"><div><div class="t">Пауза, когда накопилось много</div><div class="s">Включится сама и выключится, когда вы разберёте заказы</div></div><button class="sw" role="switch" aria-checked="${!!c.auto}" data-act="ai-auto" aria-label="Автопауза"></button></div>
     ${c.auto ? html`<div class="mono" style="margin-top:6px">неразобранных, при которых ставить на паузу</div><div class="chips wrap">${[20, 40, 80, 150].map((n) => raw(`<button class="chip${c.limit === n ? ' on' : ''}" type="button" data-act="ai-limit" data-v="${n}">${n}</button>`))}</div>` : ''}
@@ -340,6 +341,7 @@ export const connectActions = {
     rerender('cloud-form');
   }),
   'ai-pause': () => run(async () => { await setAiControl({ paused: !S.status.llm.control.paused }); rerender('ai-done'); }),
+  'ai-unlimited': () => run(async () => { await setAiControl({ unlimited: !S.status.llm.control.unlimited }); await loadStatus(); rerender('ai-done'); }),
   'ai-auto': () => run(async () => { await setAiControl({ auto: !S.status.llm.control.auto }); rerender('ai-done'); }),
   'ai-limit': (el) => run(async () => { await setAiControl({ limit: +el.dataset.v }); rerender('ai-done'); }),
   'ai-models': () => run(async () => {

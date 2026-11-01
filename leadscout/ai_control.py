@@ -12,7 +12,7 @@ from typing import Any
 from .db import Database
 from .util import iso, now_utc
 
-DEFAULT: dict[str, Any] = {"paused": False, "auto": True, "limit": 40}
+DEFAULT: dict[str, Any] = {"paused": False, "auto": True, "limit": 40, "unlimited": False}
 LIMITS = (20, 40, 80, 150)
 
 BACKLOG_SQL = (
@@ -33,7 +33,7 @@ def save(db: Database, patch: dict[str, Any]) -> dict[str, Any]:
     for k in DEFAULT:
         if patch.get(k) is not None:
             cur[k] = patch[k]
-    cur["paused"], cur["auto"] = bool(cur["paused"]), bool(cur["auto"])
+    cur["paused"], cur["auto"], cur["unlimited"] = bool(cur["paused"]), bool(cur["auto"]), bool(cur["unlimited"])
     cur["limit"] = max(5, min(500, int(cur["limit"])))
     db.set_setting("ai_control", cur)
     return cur
