@@ -320,3 +320,43 @@ def test_unlimited_mode_removes_the_apps_own_limits(tmp_path):
     assert rt.llm_status()["control"]["unlimited"] is True
     rt.set_ai_control({"unlimited": False})
     assert rt.llm.primary.rpd == 1800
+
+
+class Judge(FakeAI):
+    """ИИ-двойник: заказ про SMM «не подходит», остальное подходит."""
+
+    async def classify(self, texts, profile, yes, no):
+        self.calls.append({"texts": list(texts), "yes": yes, "no": no})
+        return [Verdict("order", False, "no" if "SMM" in t else "yes") for t in texts]
+
+
+def test_a_real_order_outside_your_directions_goes_to_rejected_not_to_the_feed(db, settings, chat_id):
+    p = Pipeline(db, Judge(), settings)
+    p.ai_on = lambda: True
+    smm = "Нужен SMM-специалист для ведения Instagram магазина одежды, задачи: контент-план и сторис. @shop_smm1"
+    bot = "Нужен телеграм-бот с GPT для записи клиентов в салон красоты, срок неделя. @salon_bot1"
+    ids = run(ingest(p, chat_id, [smm, bot]))
+    a, b = (store.get_order(db, i) for i in ids)
+    assert a["verdict"] == "skip" and a["score"] <= 30 and "не про ваши направления" in a["why"]
+    assert b["verdict"] in {"match", "maybe"}
+    assert db.scalar("SELECT note FROM messages WHERE id=?", (a["message_id"],)) == "ai:order/не_по_теме"
+    rejected = {o["id"] for o in db.all("SELECT id FROM orders WHERE verdict='skip'")}
+    assert a["id"] in rejected and b["id"] not in rejected
+
+
+def test_fit_is_parsed_and_defaults_to_maybe():
+    out = classify.parse_verdicts({"results": [{"i": 1, "kind": "order", "unsure": False, "fit": "no"}, {"i": 2, "kind": "order", "unsure": False, "fit": "странно"},
+                                                {"i": 3, "kind": "order", "unsure": False}]}, 3)
+    assert [v.fit for v in out] == ["no", "maybe", "maybe"]
+    system, _ = classify.build_prompt(["x"], Profile(), [], [])
+    assert "fit" in system and "ИИ-дизайнер" in system and "НЕ связанная с ИИ" in system
+
+
+def test_titles_do_not_start_with_hashtags():
+    from leadscout import extract as ex
+
+    assert ex.make_title("#ищу #менеджер #ассистент #рассылки\nПривет! Ищу ассистента для рассылок для эксперта по оффлайн мероприятиям") == "Привет! Ищу ассистента для рассылок для эксперта по оффлайн мероприятиям"
+    assert ex.make_title("#ищу #дизайн #графика Нужен логотип и минимальный фирменный стиль. Задачи: небольшая пекарня").startswith("Логотип и минимальный фирменный стиль")
+    assert ex.make_title("#ищу#ассистент#менеджер-по-перепискам#МОП 🌟 В команду продюсера ищем человека на коммуникации с экспертами.").startswith("В команду продюсера")
+    assert ex.make_title("Нужен бот для записи клиентов в салон, бюджет 30000").startswith("Бот для записи")
+    assert ex.make_title("#ищу #ищу").strip()  # одни хэштеги: название всё равно есть
