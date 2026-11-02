@@ -249,6 +249,10 @@ class Pipeline:
         profile = load_profile(self.db)
         view = self._view(ext, text, raw, chat)
         score = await self._score(view, profile, ext)
+        off_topic = verdict is not None and verdict.order and verdict.fit == "no" and not force
+        if off_topic:  # заказ настоящий, но ИИ по вашим словам видит, что он не про ваши направления: показываем в «Отсеянных», а не в ленте
+            score = Score(score=min(score.score, 30), verdict="skip", why="ИИ: настоящий заказ, но не про ваши направления.",
+                          fit=[{"ok": False, "text": "Не про ваши направления (по вашему описанию)"}, *score.fit][:5], flags=score.flags, scored_by=score.scored_by)
 
         async with self._lock:
             # пока думали, мог прийти такой же заказ из другого чата
@@ -257,7 +261,7 @@ class Pipeline:
             order_id = self._save(mid, raw, ext, view, score, profile, chat)
             if not force:  # как решили: для разбора ошибок в выгрузке работы ИИ
                 doubt = any(f.code == "doubt" for f in ext.flags)
-                decision = ("ai:order?" if verdict.unsure else "ai:order") if verdict is not None else ("gate:maybe" if doubt else "gate:order")
+                decision = (("ai:order?" if verdict.unsure else "ai:order") + ("/не_по_теме" if off_topic else "")) if verdict is not None else ("gate:maybe" if doubt else "gate:order")
                 self.db.run("UPDATE messages SET note=? WHERE id=?", (decision, mid))
         await self._pre_draft(order_id, view, profile, score)
         return order_id
