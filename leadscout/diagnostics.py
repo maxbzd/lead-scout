@@ -43,7 +43,7 @@ def build(rt: Runtime, hide: bool = True, limit: int = 250, days: int = 7) -> di
     since = iso(now_utc() - timedelta(days=days))
     rows = db.all(
         "SELECT m.id, m.text, m.posted_at, m.status, m.note, c.title AS chat, c.is_demo AS demo, "
-        "o.id AS order_id, o.title, o.score, o.verdict, (o.verdict='match' AND o.score>=90) AS hot, o.state, o.feedback, o.feedback_reason, o.offered_at, o.scored_by "
+        "o.id AS order_id, o.title, o.why, o.score, o.verdict, (o.verdict='match' AND o.score>=90) AS hot, o.state, o.feedback, o.feedback_reason, o.offered_at, o.scored_by "
         "FROM messages m JOIN chats c ON c.id=m.chat_id LEFT JOIN orders o ON o.message_id=m.id "
         "WHERE m.posted_at>=? AND m.status IN ('order','noise','deleted') ORDER BY m.posted_at DESC LIMIT ?",
         (since, max(10, min(2000, limit))))
@@ -54,7 +54,7 @@ def build(rt: Runtime, hide: bool = True, limit: int = 250, days: int = 7) -> di
         summary[decision] = summary.get(decision, 0) + 1
         order = None
         if r["order_id"]:
-            order = {"id": r["order_id"], "title": cut(r["title"]), "score": r["score"], "verdict": r["verdict"], "hot": bool(r["hot"]),
+            order = {"id": r["order_id"], "title": cut(r["title"]), "why": cut(r["why"]), "score": r["score"], "verdict": r["verdict"], "hot": bool(r["hot"]),
                      "state": r["state"], "scored_by": r["scored_by"], "feedback": r["feedback"], "feedback_reason": r["feedback_reason"],
                      "offered": bool(r["offered_at"])}
         items.append({"id": r["id"], "chat": r["chat"], "demo": bool(r["demo"]), "at": r["posted_at"], "decision": r["note"], "result": r["status"],

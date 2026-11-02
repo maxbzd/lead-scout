@@ -454,8 +454,11 @@ _LEAD = re.compile(
 
 
 def make_title(text: str, limit: int = 78) -> str:
-    lines = [ln.strip(" \t*_-–—•·#") for ln in text.strip().splitlines() if ln.strip()]
-    first = lines[0] if lines else text.strip()
+    clean = re.sub(r"(?m)^(?:[ \t]*#[\w\-]+)+", " ", text)  # ряд хэштегов в начале строки, в том числе слепленных: #ищу#ассистент#МОП
+    clean = re.sub(r"(?<![\w])#[\w\-]+", " ", clean)  # хэштеги в названии не нужны: «Ищу #менеджер #ассистент» ничего не говорит
+    lines = [re.sub(r"\s+", " ", ln).strip(" \t*_-–—•·#") for ln in clean.strip().splitlines() if ln.strip(" \t*_-–—•·#")]
+    lines = lines or [ln.strip(" \t*_-–—•·#") for ln in text.strip().splitlines() if ln.strip()]
+    first = next((ln for ln in lines if len(_LEAD.sub("", ln).strip(" .:;!-–—")) >= 12), lines[0] if lines else text.strip())
     first = re.sub(r"https?://\S+", "", first)
     first = re.sub(r"[\U0001F000-\U0001FFFF☀-➿️]+", "", first).strip(" .:;!-–—")
     stripped = _LEAD.sub("", first).strip(" .:;!-–—")
